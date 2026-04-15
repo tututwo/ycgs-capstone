@@ -1,0 +1,655 @@
+---
+title: "Initial EDA: California School Closures and Wildfire Disruption"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+execute:
+  warning: false
+  message: false
+editor: visual
+---
+
+## Setup
+
+The codebook defines `year` as the ending year of the academic school year. For example, `2004` represents the 2003-2004 academic year.
+
+This notebook treats `days_student_safety` as the main student-safety category. The columns `days_quarantine` and `days_safety_other` appear to be subcategories of student safety in the codebook, so they are not included in the main cause totals below to avoid double counting. Check the validation output before relying on this assumption.
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+library(scales)
+
+theme_set(theme_minimal(base_size = 12))
+
+data_file <- "Annual school closures and standardized test scores in California, 2003-2019.csv"
+data_path_candidates <- c(
+  file.path("..", "school_fire_data", data_file),
+  file.path("school_fire_data", data_file)
+)
+
+data_path <- data_path_candidates[file.exists(data_path_candidates)][1]
+if (is.na(data_path)) {
+  stop("Could not find the CSV. Check the relative path from this Quarto file.")
+}
+
+to_number <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "NULL"))
+}
+
+safe_divide <- function(num, den) {
+  if_else(!is.na(den) & den > 0, num / den, NA_real_)
+}
+
+df <- readr::read_csv(
+  data_path,
+  col_types = readr::cols(
+    cds_code = readr::col_character(),
+    .default = readr::col_guess()
+  ),
+  show_col_types = FALSE
+) |>
+  clean_names()
+
+# The provided column listing uses days_wildfires, while the codebook uses
+# Days.Wildfire. Standardize to singular so downstream code is consistent.
+if ("days_wildfires" %in% names(df) && !"days_wildfire" %in% names(df)) {
+  df <- df |>
+    rename(days_wildfire = days_wildfires)
+}
+
+primary_cause_vars <- c(
+  "days_wildfire",
+  "days_natural_disasters_weather",
+  "days_infrastructure",
+  "days_student_safety",
+  "days_other"
+)
+
+closure_numeric_vars <- c(
+  primary_cause_vars,
+  "days_quarantine",
+  "days_safety_other",
+  "days_total",
+  "total_enrollment"
+)
+
+df <- df |>
+  mutate(
+    year = as.integer(year),
+    county = str_squish(str_to_title(county)),
+    across(any_of(closure_numeric_vars), to_number),
+    across(any_of(primary_cause_vars), ~ replace_na(.x, 0)),
+    days_total = replace_na(days_total, 0)
+  )
+
+cause_lookup <- tibble(
+  cause = primary_cause_vars,
+  cause_label = factor(
+    c(
+      "Wildfire",
+      "Natural disasters/weather",
+      "Infrastructure",
+      "Student safety",
+      "Other"
+    ),
+    levels = c(
+      "Wildfire",
+      "Natural disasters/weather",
+      "Infrastructure",
+      "Student safety",
+      "Other"
+    )
+  )
+)
+
+cause_palette <- c(
+  "Wildfire" = "#C7432B",
+  "Natural disasters/weather" = "#3F7D8C",
+  "Infrastructure" = "#D0A03A",
+  "Student safety" = "#5E6E46",
+  "Other" = "#7D7A78"
+)
+
+year_breaks <- function(x) {
+  seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), by = 2)
+}
+```
+
+## Quick data checks
+
+```{r quick-data-checks}
+glimpse(df)
+
+if (requireNamespace("skimr", quietly = TRUE)) {
+  skimr::skim(df)
+}
+```
+
+Check whether the primary cause fields balance against `days_total`. If many rows have a large nonzero difference, revisit the cause grouping before interpreting the stacked charts.
+
+```{r closure-balance-check}
+df |>
+  mutate(
+    primary_cause_sum = rowSums(pick(all_of(primary_cause_vars)), na.rm = TRUE),
+    total_minus_primary_causes = days_total - primary_cause_sum
+  ) |>
+  count(total_minus_primary_causes, sort = TRUE) |>
+  slice_head(n = 20)
+```
+
+Check whether the student-safety total appears to be the sum of quarantine and other safety. This helps confirm whether `days_quarantine` and `days_safety_other` should be treated as subcategories rather than separate top-level causes.
+
+```{r student-safety-subcategory-check}
+df |>
+  mutate(
+    student_safety_subtotal = coalesce(days_quarantine, 0) + coalesce(days_safety_other, 0),
+    student_safety_difference = days_student_safety - student_safety_subtotal
+  ) |>
+  count(student_safety_difference, sort = TRUE) |>
+  slice_head(n = 20)
+```
+
+## Create yearly summaries
+
+These summaries feed the charts below.
+
+```{r yearly-summaries}
+statewide_by_year <- df |>
+  group_by(year) |>
+  summarise(
+    schools = n_distinct(cds_code),
+    schools_with_any_closure = n_distinct(cds_code[days_total > 0]),
+    total_enrollment = sum(total_enrollment, na.rm = TRUE),
+    across(all_of(primary_cause_vars), ~ sum(.x, na.rm = TRUE)),
+    days_total = sum(days_total, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    primary_cause_sum = rowSums(pick(all_of(primary_cause_vars)), na.rm = TRUE),
+    wildfire_share_of_total_days = safe_divide(days_wildfire, days_total),
+    wildfire_share_of_primary_causes = safe_divide(days_wildfire, primary_cause_sum)
+  )
+
+statewide_long <- statewide_by_year |>
+  select(year, all_of(primary_cause_vars)) |>
+  pivot_longer(
+    cols = all_of(primary_cause_vars),
+    names_to = "cause",
+    values_to = "closure_days"
+  ) |>
+  left_join(cause_lookup, by = "cause")
+
+statewide_by_year |>
+  arrange(desc(days_wildfire)) |>
+  select(
+    year,
+    schools,
+    days_wildfire,
+    days_total,
+    wildfire_share_of_total_days,
+    wildfire_share_of_primary_causes
+  ) |>
+  slice_head(n = 10)
+```
+
+## 1. Wildfire vs. other closure causes over time
+
+Question: In which years did wildfire spike, and how does wildfire compare with other statewide closure causes?
+
+```{r wildfire-vs-other-causes-line}
+ggplot(
+  statewide_long,
+  aes(x = year, y = closure_days, color = cause_label, group = cause_label)
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_color_manual(values = cause_palette, name = NULL) +
+  scale_x_continuous(breaks = year_breaks(statewide_long$year)) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Statewide school closure days by cause",
+    subtitle = "Wildfire is compared with other documented closure causes by academic-year ending year",
+    x = "Academic-year ending year",
+    y = "Statewide closure days"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+Optional version: combine all non-wildfire causes into a single comparison line.
+
+```{r wildfire-vs-non-wildfire-line}
+wildfire_vs_non_wildfire <- statewide_by_year |>
+  transmute(
+    year,
+    Wildfire = days_wildfire,
+    `All non-wildfire primary causes` = primary_cause_sum - days_wildfire
+  ) |>
+  pivot_longer(
+    cols = -year,
+    names_to = "cause_group",
+    values_to = "closure_days"
+  )
+
+ggplot(
+  wildfire_vs_non_wildfire,
+  aes(x = year, y = closure_days, color = cause_group, group = cause_group)
+) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 1.8) +
+  scale_color_manual(
+    values = c(
+      "Wildfire" = "#C7432B",
+      "All non-wildfire primary causes" = "#4A5568"
+    ),
+    name = NULL
+  ) +
+  scale_x_continuous(breaks = year_breaks(wildfire_vs_non_wildfire$year)) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Wildfire closure days vs. all non-wildfire closure days",
+    x = "Academic-year ending year",
+    y = "Statewide closure days"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+## 2. Wildfire share of all closure days
+
+Question: Was wildfire a major driver of instructional disruption, especially in major fire years?
+
+This 100% stacked chart uses the primary cause fields as the denominator. Use the balance check above to decide whether this is preferable to `days_total` as the denominator.
+
+```{r wildfire-share-stacked-bar}
+statewide_share <- statewide_long |>
+  group_by(year) |>
+  mutate(
+    year_primary_total = sum(closure_days, na.rm = TRUE),
+    share = safe_divide(closure_days, year_primary_total)
+  ) |>
+  ungroup() |>
+  filter(!is.na(share))
+
+ggplot(
+  statewide_share,
+  aes(x = factor(year), y = share, fill = cause_label)
+) +
+  geom_col(width = 0.86, color = "white", linewidth = 0.15) +
+  scale_fill_manual(values = cause_palette, name = NULL) +
+  scale_y_continuous(labels = label_percent()) +
+  labs(
+    title = "Share of statewide school closure days by cause",
+    subtitle = "Each bar sums to 100% across the primary documented closure causes",
+    x = "Academic-year ending year",
+    y = "Share of primary closure days"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Alternative: wildfire share using the documented `days_total` denominator.
+
+```{r wildfire-share-days-total-line}
+ggplot(
+  statewide_by_year,
+  aes(x = year, y = wildfire_share_of_total_days)
+) +
+  geom_area(fill = "#C7432B", alpha = 0.25) +
+  geom_line(color = "#C7432B", linewidth = 1.1) +
+  geom_point(color = "#C7432B", size = 1.8) +
+  scale_x_continuous(breaks = year_breaks(statewide_by_year$year)) +
+  scale_y_continuous(labels = label_percent(), limits = c(0, NA)) +
+  labs(
+    title = "Wildfire share of all documented statewide closure days",
+    x = "Academic-year ending year",
+    y = "Wildfire share of days_total"
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## 3. Total instructional disruption with wildfire highlighted
+
+Question: Did total disruption change over time, and how much of each year's disruption was wildfire related?
+
+```{r total-disruption-wildfire-highlight}
+total_with_wildfire_component <- statewide_by_year |>
+  transmute(
+    year,
+    Wildfire = days_wildfire,
+    `Non-wildfire days` = pmax(days_total - days_wildfire, 0)
+  ) |>
+  pivot_longer(
+    cols = -year,
+    names_to = "component",
+    values_to = "closure_days"
+  ) |>
+  mutate(
+    component = factor(component, levels = c("Non-wildfire days", "Wildfire"))
+  )
+
+ggplot(
+  total_with_wildfire_component,
+  aes(x = factor(year), y = closure_days, fill = component)
+) +
+  geom_col(width = 0.86) +
+  scale_fill_manual(
+    values = c(
+      "Non-wildfire days" = "#D9D6CF",
+      "Wildfire" = "#C7432B"
+    ),
+    name = NULL
+  ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Total statewide closure days, with wildfire highlighted",
+    subtitle = "Bar height uses days_total; red segment is days_wildfire",
+    x = "Academic-year ending year",
+    y = "Statewide closure days"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+## 4. How widespread wildfire disruption was across schools
+
+Question: Were wildfire closures broad-based across many schools, or concentrated in a small number of schools?
+
+```{r wildfire-reach-by-year}
+wildfire_reach_by_year <- df |>
+  group_by(year) |>
+  summarise(
+    schools = n_distinct(cds_code),
+    schools_with_wildfire_closure = n_distinct(cds_code[days_wildfire > 0]),
+    pct_schools_with_wildfire_closure = safe_divide(
+      schools_with_wildfire_closure,
+      schools
+    ),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  wildfire_reach_by_year,
+  aes(x = year, y = schools_with_wildfire_closure)
+) +
+  geom_col(fill = "#C7432B", alpha = 0.85, width = 0.8) +
+  scale_x_continuous(breaks = year_breaks(wildfire_reach_by_year$year)) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Number of schools with at least one wildfire closure day",
+    x = "Academic-year ending year",
+    y = "Schools with wildfire closures"
+  ) +
+  theme(panel.grid.minor = element_blank())
+
+ggplot(
+  wildfire_reach_by_year,
+  aes(x = year, y = pct_schools_with_wildfire_closure)
+) +
+  geom_area(fill = "#C7432B", alpha = 0.22) +
+  geom_line(color = "#C7432B", linewidth = 1.1) +
+  geom_point(color = "#C7432B", size = 1.8) +
+  scale_x_continuous(breaks = year_breaks(wildfire_reach_by_year$year)) +
+  scale_y_continuous(labels = label_percent(), limits = c(0, NA)) +
+  labs(
+    title = "Percent of schools with wildfire closures",
+    x = "Academic-year ending year",
+    y = "Percent of schools"
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## 5. Distribution of wildfire closure days in selected years
+
+Question: Were wildfire closures mostly 1-2 days across many schools, or longer closures among fewer heavily affected schools?
+
+The first chart filters to schools with at least one wildfire closure day, so the distribution is not dominated by zeros.
+
+```{r wildfire-distribution-selected-years}
+selected_years <- c(2008, 2017, 2018, 2019)
+
+wildfire_distribution_selected <- df |>
+  filter(year %in% selected_years)
+
+ggplot(
+  wildfire_distribution_selected |>
+    filter(days_wildfire > 0),
+  aes(x = factor(year), y = days_wildfire)
+) +
+  geom_boxplot(
+    fill = "#E7A15A",
+    color = "#5C2B1F",
+    alpha = 0.75,
+    outlier.alpha = 0.3
+  ) +
+  geom_jitter(width = 0.15, alpha = 0.15, size = 0.8, color = "#5C2B1F") +
+  scale_y_continuous(labels = label_number()) +
+  labs(
+    title = "Distribution of wildfire closure days among affected schools",
+    subtitle = "Filtered to schools with days_wildfire > 0",
+    x = "Academic-year ending year",
+    y = "Wildfire closure days"
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+Histogram version, also filtered to affected schools.
+
+```{r wildfire-histogram-selected-years}
+ggplot(
+  wildfire_distribution_selected |>
+    filter(days_wildfire > 0),
+  aes(x = days_wildfire)
+) +
+  geom_histogram(binwidth = 1, boundary = 0, fill = "#C7432B", color = "white") +
+  facet_wrap(vars(year), scales = "free_y") +
+  scale_x_continuous(breaks = pretty_breaks()) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "How many wildfire closure days did affected schools experience?",
+    x = "Wildfire closure days",
+    y = "Number of schools"
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+Optional table to keep the zero-school context visible.
+
+```{r wildfire-distribution-summary-table}
+wildfire_distribution_selected |>
+  group_by(year) |>
+  summarise(
+    schools = n_distinct(cds_code),
+    affected_schools = n_distinct(cds_code[days_wildfire > 0]),
+    pct_affected = safe_divide(affected_schools, schools),
+    median_days_among_affected = median(days_wildfire[days_wildfire > 0], na.rm = TRUE),
+    p90_days_among_affected = quantile(days_wildfire[days_wildfire > 0], 0.90, na.rm = TRUE),
+    max_days = max(days_wildfire, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## 6. County rankings
+
+Question: Which counties experienced the most wildfire-related disruption, and does the ranking change after normalizing?
+
+Raw totals favor larger counties. The normalized metrics below give several alternatives:
+
+-   `avg_wildfire_days_per_school_year`: average wildfire closure days per observed school-year.
+-   `wildfire_days_per_1000_students`: raw wildfire school-days divided by enrollment, scaled to 1,000 enrolled students.
+-   `avg_wildfire_days_per_student`: enrollment-weighted average wildfire closure days per student-year.
+-   `wildfire_share_of_all_closure_days`: share of documented closure days caused by wildfire.
+
+```{r county-summary}
+county_wildfire <- df |>
+  group_by(county) |>
+  summarise(
+    school_year_rows = n(),
+    schools = n_distinct(cds_code),
+    total_enrollment = sum(total_enrollment, na.rm = TRUE),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    total_closure_days = sum(days_total, na.rm = TRUE),
+    wildfire_student_days = sum(days_wildfire * total_enrollment, na.rm = TRUE),
+    avg_wildfire_days_per_school_year = safe_divide(wildfire_days, school_year_rows),
+    wildfire_days_per_1000_students = 1000 * safe_divide(wildfire_days, total_enrollment),
+    avg_wildfire_days_per_student = safe_divide(wildfire_student_days, total_enrollment),
+    wildfire_share_of_all_closure_days = safe_divide(wildfire_days, total_closure_days),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(county), county != "")
+
+top_n_counties <- 20
+
+county_wildfire |>
+  arrange(desc(wildfire_days)) |>
+  slice_head(n = top_n_counties)
+```
+
+### County ranking by raw wildfire closure days
+
+```{r county-raw-wildfire-days}
+county_wildfire |>
+  slice_max(wildfire_days, n = top_n_counties, with_ties = FALSE) |>
+  ggplot(aes(x = wildfire_days, y = fct_reorder(county, wildfire_days))) +
+  geom_col(fill = "#C7432B", alpha = 0.9) +
+  scale_x_continuous(labels = label_comma()) +
+  labs(
+    title = "Counties with the most wildfire closure days",
+    subtitle = "Raw totals are useful, but they favor counties with more schools",
+    x = "Total wildfire closure days",
+    y = NULL
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+### County ranking normalized by enrollment
+
+```{r county-enrollment-normalized-wildfire-days}
+county_wildfire |>
+  filter(total_enrollment > 0) |>
+  slice_max(
+    avg_wildfire_days_per_student,
+    n = top_n_counties,
+    with_ties = FALSE
+  ) |>
+  ggplot(
+    aes(
+      x = avg_wildfire_days_per_student,
+      y = fct_reorder(county, avg_wildfire_days_per_student)
+    )
+  ) +
+  geom_col(fill = "#9E3F2D", alpha = 0.9) +
+  scale_x_continuous(labels = label_number(accuracy = 0.01)) +
+  labs(
+    title = "Counties ranked by enrollment-weighted wildfire disruption",
+    subtitle = "Metric is average wildfire closure days per enrolled student-year",
+    x = "Average wildfire closure days per student-year",
+    y = NULL
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+### County ranking by average wildfire days per school-year
+
+```{r county-average-school-year-wildfire-days}
+county_wildfire |>
+  slice_max(
+    avg_wildfire_days_per_school_year,
+    n = top_n_counties,
+    with_ties = FALSE
+  ) |>
+  ggplot(
+    aes(
+      x = avg_wildfire_days_per_school_year,
+      y = fct_reorder(county, avg_wildfire_days_per_school_year)
+    )
+  ) +
+  geom_col(fill = "#B95A3C", alpha = 0.9) +
+  scale_x_continuous(labels = label_number(accuracy = 0.01)) +
+  labs(
+    title = "Counties ranked by average wildfire closure days per school-year",
+    x = "Average wildfire closure days per school-year",
+    y = NULL
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+### County ranking by wildfire share of all closure days
+
+```{r county-wildfire-share}
+county_wildfire |>
+  filter(total_closure_days > 0) |>
+  slice_max(
+    wildfire_share_of_all_closure_days,
+    n = top_n_counties,
+    with_ties = FALSE
+  ) |>
+  ggplot(
+    aes(
+      x = wildfire_share_of_all_closure_days,
+      y = fct_reorder(county, wildfire_share_of_all_closure_days)
+    )
+  ) +
+  geom_col(fill = "#C7432B", alpha = 0.9) +
+  scale_x_continuous(labels = label_percent()) +
+  labs(
+    title = "Counties where wildfire made up the largest share of closure days",
+    subtitle = "Filtered to counties with at least one documented closure day",
+    x = "Wildfire share of all closure days",
+    y = NULL
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
+
+## link closures to test outcomes
+
+```{r optional-test-score-scatter}
+test_score_vars <- c(
+  "percentage_standard_met_and_above_3_math",
+  "percentage_standard_met_and_above_3_english",
+  "percentage_standard_met_and_above_8_math",
+  "percentage_standard_met_and_above_8_english",
+  "percentage_standard_met_and_above_11_math",
+  "percentage_standard_met_and_above_11_english"
+)
+
+test_score_long <- df |>
+  select(cds_code, year, county, days_wildfire, any_of(test_score_vars)) |>
+  mutate(across(any_of(test_score_vars), to_number)) |>
+  pivot_longer(
+    cols = any_of(test_score_vars),
+    names_to = "test_metric",
+    values_to = "percent_met_or_above"
+  ) |>
+  filter(!is.na(percent_met_or_above))
+
+ggplot(
+  test_score_long,
+  aes(x = days_wildfire, y = percent_met_or_above)
+) +
+  geom_jitter(width = 0.15, height = 0, alpha = 0.08, size = 0.7) +
+  geom_smooth(method = "loess", se = FALSE, color = "#C7432B") +
+  facet_wrap(vars(test_metric), scales = "free_y") +
+  scale_x_continuous(labels = label_number()) +
+  labs(
+    title = "Exploratory relationship between wildfire closure days and test performance",
+    subtitle = "Descriptive only; interpret cautiously because schools differ in many other ways",
+    x = "Wildfire closure days",
+    y = "Percent meeting or exceeding standard"
+  ) +
+  theme(panel.grid.minor = element_blank())
+```
