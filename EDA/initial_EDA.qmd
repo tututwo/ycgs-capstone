@@ -1,5 +1,5 @@
 ---
-title: "Initial EDA: Wildfire School Closures and Absenteeism by Reason"
+title: "Initial EDA: Wildfire School Closures, Chronic Absenteeism, and Absenteeism by Reason"
 format:
   html:
     toc: true
@@ -18,13 +18,23 @@ editor: visual
 
 ## Setup
 
-This EDA follows three questions:
+This EDA follows one central question:
+
+**Where is wildfire disrupting schooling the most in 2017-18 and 2018-19, and do those same counties show higher chronic absenteeism rates?**
+
+The analysis breaks that question into five EDA questions:
 
 1.  Are wildfires a major driver of instructional disruption?
-2.  Is the closure burden distributed unevenly across counties, districts, and schools?
-3.  What do absenteeism-by-reason patterns look like in schools with wildfire closure burden?
+2.  Which counties, districts, and schools have the most wildfire missed student-days?
+3.  Which counties have the highest chronic absenteeism rates in 2017-18 and 2018-19?
+4.  Do counties with higher wildfire missed student-days also have higher chronic absenteeism rates?
+5.  Among affected school-years, how do absence-day patterns and absence reasons differ by wildfire burden?
 
-The closure dataset uses `year` as the ending year of the academic year. For example, `2019` represents the 2018-19 academic year. The absenteeism analysis therefore uses CDE Absenteeism by Reason files for 2017-18 and 2018-19, matched to closure `year == 2018` and `year == 2019`. The 2019-20 absenteeism file is intentionally excluded because CDE marks it unavailable/not valid due to COVID-era disruption.
+The closure dataset uses `year` as the ending year of the academic year. For example, `2019` represents the 2018-19 academic year. The absenteeism analyses therefore use CDE files for 2017-18 and 2018-19, matched to closure `year == 2018` and `year == 2019`. The 2019-20 absenteeism files are intentionally excluded because CDE marks that year unavailable/not valid due to COVID-era disruption.
+
+This EDA uses two CDE attendance datasets. The **Chronic Absenteeism Data** provide county-level chronic absenteeism counts, eligible enrollment, and rates for the main county comparison. The **Absenteeism by Reason Data** provide school-year absence days and reason composition, which are used as supporting detail rather than as chronic absenteeism rates.
+
+The primary wildfire burden metric is **wildfire missed student-days**, calculated as wildfire closure days multiplied by school-year enrollment. This metric is used because it reflects both the duration of disruption and the number of students exposed. Raw wildfire days and wildfire share of total closure days remain useful supporting measures, but missed student-days is the main scale for comparing burden across counties, districts, schools, and matched absenteeism records.
 
 `days_quarantine` and `days_safety_other` appear to be subcategories of student safety in the codebook, so they are not included in the main top-level closure-cause totals below to avoid double counting.
 
@@ -362,6 +372,10 @@ ggplot(
   theme(panel.grid.minor = element_blank())
 ```
 
+### Step 1 takeaway
+
+Wildfire is a major driver of statewide instructional disruption, especially in peak closure years. The statewide rankings and cause-share plots show that 2018 and 2019 are central to the recent pre-pandemic wildfire story: wildfire closure days account for most statewide closure days in those years. This supports focusing the absenteeism comparison on the matched 2017-18 and 2018-19 school years.
+
 ## Step 2: Is the burden uneven across counties, districts, and schools?
 
 This section focuses on 2017-18 and 2018-19 to match the absenteeism files.
@@ -659,7 +673,494 @@ if (!is.null(county_map_data)) {
 }
 ```
 
-## Step 3: What does absenteeism look like in affected schools?
+### Step 2 takeaway
+
+Wildfire burden is widespread but uneven. In the 2017-18 and 2018-19 window, many counties, districts, and schools have some wildfire closure burden, but missed student-days are concentrated in a much smaller set of places. District counts can vary depending on whether districts are counted as county-district pairs or by district name alone; this notebook uses county-district pairs for the district burden tables because district names are not guaranteed to be unique statewide.
+
+## Step 3: Which counties have the highest chronic absenteeism rates?
+
+### Load CDE Chronic Absenteeism data
+
+CDE file source: <https://www.cde.ca.gov/ds/ad/fsabd.asp>
+
+The chronic absenteeism files provide the main county-level outcome for this EDA. The analysis uses county total records (`aggregate_level == "C"` and `reporting_category == "TA"`) so rates are not duplicated across student-group rows. Older chronic absenteeism files do not include a `dass` field, so the reader below harmonizes that field to `"All"` when absent.
+
+```{r load-chronic-absenteeism-data}
+chronic_absenteeism_numeric_vars <- c(
+  "chronic_absenteeism_eligible_cumulative_enrollment",
+  "chronic_absenteeism_count",
+  "chronic_absenteeism_rate_reported"
+)
+
+resolve_attendance_source <- function(file_name, url) {
+  source_candidates <- c(
+    file.path("..", "absenteeism_data", file_name),
+    file.path("absenteeism_data", file_name)
+  )
+
+  local_source <- source_candidates[file.exists(source_candidates)][1]
+  if (!is.na(local_source)) {
+    return(local_source)
+  }
+
+  url
+}
+
+empty_chronic_absenteeism <- function(closure_year, source, status) {
+  tibble(
+    academic_year = character(),
+    aggregate_level = character(),
+    county_code = character(),
+    district_code = character(),
+    school_code = character(),
+    county_name = character(),
+    district_name = character(),
+    school_name = character(),
+    charter = character(),
+    dass = character(),
+    reporting_category = character(),
+    chronic_absenteeism_eligible_cumulative_enrollment = character(),
+    chronic_absenteeism_count = character(),
+    chronic_absenteeism_rate_reported = character(),
+    closure_year = integer(),
+    source_url = character(),
+    chronic_absenteeism_read_status = character()
+  ) |>
+    add_row(
+      closure_year = closure_year,
+      source_url = source,
+      chronic_absenteeism_read_status = status
+    )
+}
+
+standardize_chronic_absenteeism_names <- function(data) {
+  if ("charter_yn" %in% names(data) && !"charter" %in% names(data)) {
+    data <- data |> rename(charter = charter_yn)
+  }
+
+  if (!"dass" %in% names(data)) {
+    data <- data |> mutate(dass = "All")
+  }
+
+  eligible_col <- names(data)[str_detect(names(data), "^chronic_absenteeism_eligible")]
+  if (
+    !"chronic_absenteeism_eligible_cumulative_enrollment" %in% names(data) &&
+      length(eligible_col) > 0
+  ) {
+    data <- data |>
+      rename(chronic_absenteeism_eligible_cumulative_enrollment = all_of(eligible_col[1]))
+  }
+
+  if ("chronic_absenteeism_rate" %in% names(data)) {
+    data <- data |> rename(chronic_absenteeism_rate_reported = chronic_absenteeism_rate)
+  }
+
+  data
+}
+
+read_tsv_source <- function(source) {
+  if (file.exists(source)) {
+    return(
+      readr::read_tsv(
+        source,
+        col_types = readr::cols(.default = readr::col_character()),
+        na = c("", "NA"),
+        show_col_types = FALSE
+      )
+    )
+  }
+
+  lines <- readLines(source, warn = FALSE)
+  lines <- iconv(lines, from = "", to = "UTF-8", sub = "byte")
+  if (
+    length(lines) < 2 ||
+      str_detect(str_to_lower(lines[1]), "<html|<!doctype|wafalert")
+  ) {
+    stop("Attendance source did not return a tab-delimited data file.")
+  }
+
+  readr::read_tsv(
+    I(paste(lines, collapse = "\n")),
+    col_types = readr::cols(.default = readr::col_character()),
+    na = c("", "NA"),
+    show_col_types = FALSE
+  )
+}
+
+read_chronic_absenteeism_file <- function(file_name, url, closure_year) {
+  source <- resolve_attendance_source(file_name, url)
+  old_timeout <- getOption("timeout")
+  options(timeout = 20)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  tryCatch(
+    {
+      chronic_data <- read_tsv_source(source) |>
+        clean_names() |>
+        standardize_chronic_absenteeism_names()
+
+      required_chronic_cols <- c(
+        "academic_year",
+        "aggregate_level",
+        "county_code",
+        "county_name",
+        "charter",
+        "dass",
+        "reporting_category",
+        "chronic_absenteeism_eligible_cumulative_enrollment",
+        "chronic_absenteeism_count"
+      )
+      missing_chronic_cols <- setdiff(required_chronic_cols, names(chronic_data))
+      if (length(missing_chronic_cols) > 0) {
+        stop(
+          "Chronic absenteeism file did not contain expected columns: ",
+          str_c(missing_chronic_cols, collapse = ", ")
+        )
+      }
+
+      chronic_data |>
+        mutate(
+          closure_year = closure_year,
+          source_url = source,
+          chronic_absenteeism_read_status = "ok"
+        )
+    },
+    error = function(e) {
+      empty_chronic_absenteeism(
+        closure_year = closure_year,
+        source = source,
+        status = str_c("read failed: ", conditionMessage(e))
+      )
+    }
+  )
+}
+
+chronic_absenteeism_sources <- tibble(
+  academic_year = analysis_year_labels,
+  closure_year = analysis_years,
+  file_name = c(
+    "chronicabsenteeism18.txt",
+    "chronicabsenteeism19.txt"
+  ),
+  url = c(
+    "https://www3.cde.ca.gov/demo-downloads/attendance/chronicabsenteeism18.txt",
+    "https://www3.cde.ca.gov/demo-downloads/attendance/chronicabsenteeism19.txt"
+  )
+)
+
+chronic_absenteeism_raw <- chronic_absenteeism_sources |>
+  mutate(data = pmap(list(file_name, url, closure_year), read_chronic_absenteeism_file)) |>
+  select(data) |>
+  unnest(cols = data)
+
+chronic_absenteeism_raw |>
+  distinct(closure_year, source_url, chronic_absenteeism_read_status)
+```
+
+### Chronic absenteeism data quality checks
+
+```{r chronic-absenteeism-quality-checks}
+chronic_absenteeism_county_year <- chronic_absenteeism_raw |>
+  filter(
+    chronic_absenteeism_read_status == "ok",
+    aggregate_level == "C",
+    reporting_category == "TA",
+    str_to_lower(charter) == "all",
+    str_to_lower(dass) == "all"
+  ) |>
+  mutate(
+    county_code = pad_code(county_code, 2),
+    county_name = str_squish(str_to_title(county_name)),
+    across(all_of(chronic_absenteeism_numeric_vars), to_number),
+    chronic_absenteeism_rate_reported = chronic_absenteeism_rate_reported / 100,
+    chronic_absenteeism_rate = safe_divide(
+      chronic_absenteeism_count,
+      chronic_absenteeism_eligible_cumulative_enrollment
+    ),
+    chronic_absenteeism_rate_reported_difference = chronic_absenteeism_rate -
+      chronic_absenteeism_rate_reported
+  )
+
+chronic_absenteeism_county_year |>
+  summarise(
+    rows = n(),
+    county_years = n_distinct(str_c(county_name, closure_year)),
+    counties = n_distinct(county_name),
+    years = n_distinct(closure_year),
+    suppressed_or_missing_counties = sum(
+      is.na(chronic_absenteeism_eligible_cumulative_enrollment) |
+        is.na(chronic_absenteeism_count)
+    )
+  )
+
+chronic_absenteeism_county_year |>
+  count(county_name, closure_year, sort = TRUE) |>
+  filter(n != 1) |>
+  slice_head(n = 20)
+
+chronic_absenteeism_county_year |>
+  summarise(
+    median_abs_rate_difference = median(
+      abs(chronic_absenteeism_rate_reported_difference),
+      na.rm = TRUE
+    ),
+    max_abs_rate_difference = max(
+      abs(chronic_absenteeism_rate_reported_difference),
+      na.rm = TRUE
+    )
+  )
+```
+
+```{r chronic-absenteeism-county-analysis}
+county_chronic_absenteeism <- chronic_absenteeism_county_year |>
+  group_by(county_name) |>
+  summarise(
+    chronic_years_observed = n_distinct(closure_year),
+    chronic_absenteeism_eligible_cumulative_enrollment = sum(
+      chronic_absenteeism_eligible_cumulative_enrollment,
+      na.rm = TRUE
+    ),
+    chronic_absenteeism_count = sum(chronic_absenteeism_count, na.rm = TRUE),
+    pooled_chronic_absenteeism_rate = safe_divide(
+      chronic_absenteeism_count,
+      chronic_absenteeism_eligible_cumulative_enrollment
+    ),
+    chronic_absenteeism_rate_2017_18 = safe_divide(
+      sum(chronic_absenteeism_count[closure_year == 2018], na.rm = TRUE),
+      sum(
+        chronic_absenteeism_eligible_cumulative_enrollment[closure_year == 2018],
+        na.rm = TRUE
+      )
+    ),
+    chronic_absenteeism_rate_2018_19 = safe_divide(
+      sum(chronic_absenteeism_count[closure_year == 2019], na.rm = TRUE),
+      sum(
+        chronic_absenteeism_eligible_cumulative_enrollment[closure_year == 2019],
+        na.rm = TRUE
+      )
+    ),
+    .groups = "drop"
+  ) |>
+  filter(chronic_absenteeism_eligible_cumulative_enrollment > 0)
+
+if (nrow(county_chronic_absenteeism) == 0) {
+  tibble(
+    chronic_absenteeism_status = "No county chronic absenteeism rows are available. Add local chronicabsenteeism18.txt and chronicabsenteeism19.txt files under absenteeism_data/ or rerun when CDE downloads are accessible."
+  )
+} else {
+  county_chronic_absenteeism |>
+    arrange(desc(pooled_chronic_absenteeism_rate)) |>
+    select(
+      county_name,
+      chronic_years_observed,
+      chronic_absenteeism_eligible_cumulative_enrollment,
+      chronic_absenteeism_count,
+      pooled_chronic_absenteeism_rate,
+      chronic_absenteeism_rate_2017_18,
+      chronic_absenteeism_rate_2018_19
+    ) |>
+    slice_head(n = 15)
+}
+
+if (nrow(county_chronic_absenteeism) > 0) {
+  county_chronic_absenteeism |>
+    slice_max(pooled_chronic_absenteeism_rate, n = 20, with_ties = FALSE) |>
+    ggplot(
+      aes(
+        x = pooled_chronic_absenteeism_rate,
+        y = fct_reorder(county_name, pooled_chronic_absenteeism_rate)
+      )
+    ) +
+    geom_col(fill = "#3F7D8C", alpha = 0.9) +
+    scale_x_continuous(labels = label_percent(accuracy = 0.1)) +
+    labs(
+      title = "Counties with the highest chronic absenteeism rates",
+      subtitle = "Pooled from chronic absenteeism counts and eligible enrollment, 2017-18 and 2018-19",
+      x = "Pooled chronic absenteeism rate",
+      y = NULL
+    ) +
+    theme(panel.grid.minor = element_blank())
+}
+```
+
+### Step 3 takeaway
+
+The chronic absenteeism files provide the appropriate county-level outcome for the question about chronic absenteeism rates. The main rate used here is pooled from chronic absenteeism counts and eligible cumulative enrollment across 2017-18 and 2018-19, rather than averaging county-year percentages.
+
+## Step 4: Do higher wildfire-burden counties also have higher chronic absenteeism rates?
+
+```{r county-wildfire-chronic-join}
+county_wildfire_top_cutoff <- county_window_burden |>
+  filter(wildfire_student_days > 0) |>
+  summarise(cutoff = quantile(wildfire_student_days, 0.75, na.rm = TRUE)) |>
+  pull(cutoff)
+
+if (length(county_wildfire_top_cutoff) == 0 || is.na(county_wildfire_top_cutoff)) {
+  county_wildfire_top_cutoff <- Inf
+}
+
+county_wildfire_chronic <- county_window_burden |>
+  full_join(
+    county_chronic_absenteeism,
+    by = c("county" = "county_name")
+  ) |>
+  mutate(
+    wildfire_student_days = replace_na(wildfire_student_days, 0),
+    wildfire_days = replace_na(wildfire_days, 0),
+    total_enrollment_school_years = replace_na(total_enrollment_school_years, 0),
+    wildfire_student_days_per_1k_enrolled = safe_divide(
+      wildfire_student_days * 1000,
+      total_enrollment_school_years
+    ),
+    county_wildfire_burden_group = case_when(
+      wildfire_student_days <= 0 ~ "No wildfire",
+      wildfire_student_days >= county_wildfire_top_cutoff ~ "Affected: top 25%",
+      TRUE ~ "Affected: lower 75%"
+    ),
+    county_wildfire_burden_group = factor(
+      county_wildfire_burden_group,
+      levels = c("No wildfire", "Affected: lower 75%", "Affected: top 25%")
+    )
+  )
+
+county_wildfire_chronic |>
+  arrange(desc(wildfire_student_days)) |>
+  select(
+    county,
+    wildfire_days,
+    wildfire_student_days,
+    wildfire_student_days_per_1k_enrolled,
+    chronic_years_observed,
+    chronic_absenteeism_eligible_cumulative_enrollment,
+    pooled_chronic_absenteeism_rate
+  ) |>
+  slice_head(n = 15)
+
+county_wildfire_chronic |>
+  filter(!is.na(pooled_chronic_absenteeism_rate)) |>
+  arrange(desc(pooled_chronic_absenteeism_rate)) |>
+  select(
+    county,
+    pooled_chronic_absenteeism_rate,
+    wildfire_days,
+    wildfire_student_days,
+    wildfire_student_days_per_1k_enrolled,
+    county_wildfire_burden_group
+  ) |>
+  slice_head(n = 15)
+```
+
+```{r county-wildfire-chronic-group-summary}
+county_wildfire_chronic_group_summary <- county_wildfire_chronic |>
+  filter(!is.na(pooled_chronic_absenteeism_rate)) |>
+  group_by(county_wildfire_burden_group) |>
+  summarise(
+    counties = n(),
+    wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    chronic_absenteeism_eligible_cumulative_enrollment = sum(
+      chronic_absenteeism_eligible_cumulative_enrollment,
+      na.rm = TRUE
+    ),
+    chronic_absenteeism_count = sum(chronic_absenteeism_count, na.rm = TRUE),
+    median_county_chronic_absenteeism_rate = median(
+      pooled_chronic_absenteeism_rate,
+      na.rm = TRUE
+    ),
+    pooled_chronic_absenteeism_rate = safe_divide(
+      chronic_absenteeism_count,
+      chronic_absenteeism_eligible_cumulative_enrollment
+    ),
+    .groups = "drop"
+  )
+
+county_wildfire_chronic_group_summary
+```
+
+```{r county-wildfire-chronic-scatter}
+county_wildfire_chronic_plot_data <- county_wildfire_chronic |>
+  filter(!is.na(pooled_chronic_absenteeism_rate))
+
+if (nrow(county_wildfire_chronic_plot_data) > 1) {
+  ggplot(
+    county_wildfire_chronic_plot_data,
+    aes(x = wildfire_student_days, y = pooled_chronic_absenteeism_rate)
+  ) +
+    geom_point(
+      aes(
+        size = chronic_absenteeism_eligible_cumulative_enrollment,
+        color = county_wildfire_burden_group
+      ),
+      alpha = 0.78
+    ) +
+    geom_smooth(method = "lm", se = FALSE, color = "#4A5568", linewidth = 0.7) +
+    scale_x_continuous(
+      trans = pseudo_log_trans(base = 10),
+      labels = label_comma()
+    ) +
+    scale_y_continuous(labels = label_percent(accuracy = 0.1)) +
+    scale_size_continuous(labels = label_comma(), guide = "none") +
+    scale_color_manual(values = burden_palette, name = NULL) +
+    labs(
+      title = "Wildfire missed student-days and chronic absenteeism by county",
+      subtitle = "Descriptive county-level association; not a causal estimate",
+      x = "Wildfire missed student-days",
+      y = "Pooled chronic absenteeism rate"
+    ) +
+    theme(
+      legend.position = "bottom",
+      panel.grid.minor = element_blank()
+    )
+} else {
+  tibble(chronic_absenteeism_status = "Not enough county chronic absenteeism data to draw the scatterplot.")
+}
+```
+
+```{r county-wildfire-chronic-sensitivity}
+county_wildfire_chronic_sensitivity <- county_wildfire_chronic |>
+  filter(!is.na(pooled_chronic_absenteeism_rate)) |>
+  select(
+    county,
+    wildfire_student_days,
+    wildfire_student_days_per_1k_enrolled,
+    pooled_chronic_absenteeism_rate,
+    county_wildfire_burden_group
+  ) |>
+  arrange(desc(wildfire_student_days_per_1k_enrolled))
+
+county_wildfire_chronic_sensitivity |>
+  slice_head(n = 15)
+
+if (nrow(county_wildfire_chronic_sensitivity) > 1) {
+  ggplot(
+    county_wildfire_chronic_sensitivity,
+    aes(
+      x = wildfire_student_days_per_1k_enrolled,
+      y = pooled_chronic_absenteeism_rate
+    )
+  ) +
+    geom_point(aes(color = county_wildfire_burden_group), size = 2.4, alpha = 0.78) +
+    geom_smooth(method = "lm", se = FALSE, color = "#4A5568", linewidth = 0.7) +
+    scale_x_continuous(labels = label_comma()) +
+    scale_y_continuous(labels = label_percent(accuracy = 0.1)) +
+    scale_color_manual(values = burden_palette, name = NULL) +
+    labs(
+      title = "Chronic absenteeism and wildfire burden per 1,000 enrolled student-years",
+      subtitle = "Sensitivity view using an enrollment-normalized wildfire burden metric",
+      x = "Wildfire missed student-days per 1,000 enrolled student-years",
+      y = "Pooled chronic absenteeism rate"
+    ) +
+    theme(
+      legend.position = "bottom",
+      panel.grid.minor = element_blank()
+    )
+}
+```
+
+### Step 4 takeaway
+
+This county-level comparison directly addresses whether the counties with the most wildfire disruption also have higher chronic absenteeism rates. It remains descriptive: counties differ in enrollment size, baseline attendance risk, geography, socioeconomic context, and reporting conditions, so the plots should be read as pattern-finding rather than evidence that wildfire closures caused chronic absenteeism.
+
+## Step 5: What do absence-day patterns look like in affected schools?
 
 ### Load CDE Absenteeism by Reason data
 
@@ -918,6 +1419,8 @@ join_coverage <- tibble(
 join_coverage
 ```
 
+The join covers most closure school-year rows, but not all of them. Unmatched closure rows remain in the closure data but do not contribute to absenteeism summaries, and absenteeism rows not found in the closure data are excluded from the closure-centered join. The unmatched examples below suggest that some non-matches are likely institutional or nonstandard records, but this notebook does not assume every unmatched row has the same reason.
+
 ```{r unmatched-school-year-examples}
 anti_join(closure_school_year, absenteeism_schools, by = c("cds_code", "closure_year")) |>
   select(cds_code, closure_year, county, district_name, school_site, days_wildfire, days_total) |>
@@ -958,6 +1461,64 @@ burden_group_summary <- closure_absenteeism_joined |>
 
 burden_group_summary
 ```
+
+```{r burden-group-sensitivity}
+top_10_cutoff <- closure_absenteeism_joined |>
+  filter(wildfire_student_days > 0, !is.na(avg_days_absent_per_eligible)) |>
+  summarise(cutoff = quantile(wildfire_student_days, 0.90, na.rm = TRUE)) |>
+  pull(cutoff)
+
+if (length(top_10_cutoff) == 0 || is.na(top_10_cutoff)) {
+  top_10_cutoff <- Inf
+}
+
+make_burden_sensitivity <- function(cutoff, top_label, definition_label) {
+  closure_absenteeism_joined |>
+    filter(!is.na(avg_days_absent_per_eligible)) |>
+    mutate(
+      sensitivity_group = case_when(
+        wildfire_student_days <= 0 ~ "No wildfire",
+        wildfire_student_days >= cutoff ~ top_label,
+        TRUE ~ "Affected: below cutoff"
+      )
+    ) |>
+    group_by(sensitivity_group) |>
+    summarise(
+      school_year_rows = n(),
+      schools = n_distinct(cds_code),
+      wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+      eligible_cumulative_enrollment = sum(eligible_cumulative_enrollment, na.rm = TRUE),
+      share_students_with_absence = safe_divide(
+        sum(count_students_one_or_more_absences, na.rm = TRUE),
+        eligible_cumulative_enrollment
+      ),
+      avg_days_absent_per_eligible = safe_divide(
+        sum(total_days_absent, na.rm = TRUE),
+        eligible_cumulative_enrollment
+      ),
+      .groups = "drop"
+    ) |>
+    mutate(definition = definition_label, .before = 1)
+}
+
+burden_group_sensitivity <- bind_rows(
+  make_burden_sensitivity(
+    affected_cutoff,
+    "Affected: top 25%",
+    "Top 25% of affected school-years"
+  ),
+  make_burden_sensitivity(
+    top_10_cutoff,
+    "Affected: top 10%",
+    "Top 10% of affected school-years"
+  )
+)
+
+burden_group_sensitivity |>
+  arrange(definition, sensitivity_group)
+```
+
+The sensitivity table checks whether the descriptive comparison depends entirely on the top-25% cutoff. It should be read cautiously: the highest wildfire-burden group is not automatically expected to have the highest absenteeism value because wildfire burden and absenteeism both vary with school, district, and community context.
 
 ```{r absenteeism-by-burden-group-boxplots}
 closure_absenteeism_joined |>
@@ -1065,6 +1626,80 @@ closure_absenteeism_joined |>
   ) +
   theme(panel.grid.minor = element_blank())
 ```
+
+### County-level absence-day bridge (Absenteeism by Reason)
+
+```{r county-absenteeism-bridge}
+county_absenteeism_bridge <- closure_absenteeism_joined |>
+  filter(!is.na(avg_days_absent_per_eligible), !is.na(county), county != "") |>
+  group_by(county) |>
+  summarise(
+    school_year_rows = n(),
+    schools = n_distinct(cds_code),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    eligible_cumulative_enrollment = sum(eligible_cumulative_enrollment, na.rm = TRUE),
+    count_students_one_or_more_absences = sum(count_students_one_or_more_absences, na.rm = TRUE),
+    total_days_absent = sum(total_days_absent, na.rm = TRUE),
+    share_students_with_absence = safe_divide(
+      count_students_one_or_more_absences,
+      eligible_cumulative_enrollment
+    ),
+    avg_days_absent_per_eligible = safe_divide(
+      total_days_absent,
+      eligible_cumulative_enrollment
+    ),
+    .groups = "drop"
+  ) |>
+  mutate(any_wildfire_burden = wildfire_student_days > 0)
+
+county_absenteeism_bridge |>
+  arrange(desc(wildfire_student_days)) |>
+  select(
+    county,
+    school_year_rows,
+    schools,
+    wildfire_days,
+    wildfire_student_days,
+    eligible_cumulative_enrollment,
+    avg_days_absent_per_eligible,
+    share_students_with_absence
+  ) |>
+  slice_head(n = 15)
+
+ggplot(
+  county_absenteeism_bridge,
+  aes(x = wildfire_student_days, y = avg_days_absent_per_eligible)
+) +
+  geom_point(
+    aes(size = eligible_cumulative_enrollment, color = any_wildfire_burden),
+    alpha = 0.72
+  ) +
+  geom_smooth(method = "lm", se = FALSE, color = "#4A5568", linewidth = 0.7) +
+  scale_x_continuous(
+    trans = pseudo_log_trans(base = 10),
+    labels = label_comma()
+  ) +
+  scale_y_continuous(labels = label_number(accuracy = 0.1)) +
+  scale_size_continuous(labels = label_comma(), guide = "none") +
+  scale_color_manual(
+    values = c("FALSE" = "#BFC3C7", "TRUE" = "#C7432B"),
+    labels = c("No wildfire burden", "Any wildfire burden"),
+    name = NULL
+  ) +
+  labs(
+    title = "County wildfire burden and absenteeism patterns",
+    subtitle = "County summaries aggregate matched school-year rows; descriptive only",
+    x = "Wildfire missed student-days",
+    y = "Average days absent per eligible student"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+This county view supplements the chronic absenteeism county analysis with absence-day measures from the Absenteeism by Reason files. It does not estimate the effect of wildfire closures on absence days; counties differ in many ways that are not controlled here.
 
 ### High-burden school profiles
 
@@ -1184,9 +1819,13 @@ ggplot(
   )
 ```
 
-## Optional: closure burden and test outcomes
+### Step 5 takeaway
 
-This is descriptive only and not a causal model.
+Matched absenteeism records show descriptive differences across wildfire burden groups and in high-burden school profiles. The pattern is not a causal estimate, and the most wildfire-burdened group is not necessarily the group with the highest average days absent. The safer interpretation is that wildfire burden, absence frequency, and absence reason composition vary together in ways that are worth describing, but the EDA does not isolate wildfire as the cause of absenteeism differences.
+
+## Appendix: closure burden and test outcomes
+
+This appendix is retained as an exploratory check only. It is not part of the main wildfire-closure-to-absenteeism story and should not be treated as a causal model.
 
 ```{r optional-test-score-scatter}
 test_score_vars <- c(
@@ -1225,3 +1864,17 @@ ggplot(
   ) +
   theme(panel.grid.minor = element_blank())
 ```
+
+## Limitations
+
+This EDA is descriptive, not causal. It documents where wildfire closure burden appears in the available closure records, how county chronic absenteeism rates line up with that burden, and how matched absenteeism-by-reason measures look in affected school-years. It does not estimate what absenteeism would have been without wildfire closures.
+
+The attendance analyses are limited to 2017-18 and 2018-19 because those CDE Chronic Absenteeism and Absenteeism by Reason years match closure `year == 2018` and `year == 2019`. The 2019-20 absenteeism files are excluded because CDE marks that year as unavailable/not valid due to COVID-era disruption.
+
+CDE chronic absenteeism rates reflect CALPADS eligibility rules: students are excluded from the chronic absenteeism denominator when they are expected to attend fewer than 31 instructional days, enrolled but did not attend, or meet exempt-status conditions. Suppressed `*` values are treated as missing, not zero.
+
+The closure-to-Absenteeism-by-Reason match rate is high but incomplete. Unmatched records mean the school-year absence-reason summaries cover most, but not all, closure school-year rows; the unmatched examples should be treated as diagnostics rather than a complete classification of missingness.
+
+County aggregation can hide within-county school differences. A county can have high total wildfire missed student-days because it has large enrollment, while the most intense closure burden may be concentrated in a smaller set of schools or districts.
+
+Finally, wildfire burden and absenteeism may both reflect other school and community differences, including baseline attendance patterns, grade configuration, district reporting context, socioeconomic conditions, displacement, smoke exposure, local health conditions, and other disruptions. These results are useful for describing patterns and motivating follow-up analysis, not for making causal claims.

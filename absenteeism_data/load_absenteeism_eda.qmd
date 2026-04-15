@@ -12,8 +12,11 @@ library(janitor)
 The closure EDA uses 2017-18 and 2018-19 Absenteeism by Reason files because they align with closure `year == 2018` and `year == 2019`.
 
 ```{r urls}
-url_2018 <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason18.txt"
-url_2019 <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason19.txt"
+absenteeismreason18.txt <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason18.txt"
+absenteeismreason19.txt <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason19.txt"
+
+chronicabsenteeism19.txt <- "https://www3.cde.ca.gov/demo-downloads/attendance/chronicabsenteeism19.txt"
+
 
 absenteeism_urls <- tibble(
   academic_year = c("2017-18", "2018-19"),
