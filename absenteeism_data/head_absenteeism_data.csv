@@ -1,0 +1,7 @@
+academic_year,aggregate_level,county_code,district_code,school_code,county_name,district_name,school_name,charter,dass,reporting_category,eligible_cumulative_enrollment,count_students_one_or_more_absences,average_days_absent,total_days_absent,excused_absences_percent,unexcused_absences_percent,out_of_school_suspension_absences_percent,incomplete_independent_study_absences_percent,excused_absences_count,unexcused_absences_count,out_of_school_suspension_absences_count,incomplete_independent_study_absences_count
+2024-25,T,00,NA,NA,NA,NA,NA,All,All,CAN,4759839,4274473,7.3,31235652.7,65.7,31.7,0.6,1.9,20526897.7,9908489.2,197248.5,603017.4
+2024-25,T,00,NA,NA,NA,NA,NA,All,No,CAN,4695636,4232270,7.3,30817092.8,66.2,31.7,0.6,1.5,20387101.7,9775941.9,190065.9,463983.2
+2024-25,T,00,NA,NA,NA,NA,NA,All,Yes,CAN,86124,51969,7.3,379891.7,31.7,30.0,1.0,37.4,120305.8,113895.7,3720.6,141969.7
+2024-25,T,00,NA,NA,NA,NA,NA,No,All,CAN,4157722,3865719,7.3,28213575.5,66.9,31.4,0.6,1.1,18863845.2,8860159.8,181790.9,307779.6
+2024-25,T,00,NA,NA,NA,NA,NA,No,No,CAN,4131903,3843093,7.3,27978350.4,67.0,31.3,0.6,1.1,18747892.2,8758325.5,176184.9,295947.9
+2024-25,T,00,NA,NA,NA,NA,NA,No,Yes,CAN,39369,31612,7.1,225966.3,50.4,42.7,1.5,5.4,113809.0,96576.9,3297.3,12283.1

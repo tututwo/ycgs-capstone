@@ -1,0 +1,80 @@
+---
+title: "Load CDE Absenteeism by Reason Data"
+format: html
+editor: visual
+---
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+```
+
+The closure EDA uses 2017-18 and 2018-19 Absenteeism by Reason files because they align with closure `year == 2018` and `year == 2019`.
+
+```{r urls}
+url_2018 <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason18.txt"
+url_2019 <- "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason19.txt"
+
+absenteeism_urls <- tibble(
+  academic_year = c("2017-18", "2018-19"),
+  closure_year = c(2018, 2019),
+  url = c(url_2018, url_2019)
+)
+```
+
+```{r column-names}
+col_names <- c(
+  "academic_year",
+  "aggregate_level",
+  "county_code",
+  "district_code",
+  "school_code",
+  "county_name",
+  "district_name",
+  "school_name",
+  "charter",
+  "dass",
+  "reporting_category",
+  "eligible_cumulative_enrollment",
+  "count_students_one_or_more_absences",
+  "average_days_absent",
+  "total_days_absent",
+  "excused_absences_percent",
+  "unexcused_absences_percent",
+  "out_of_school_suspension_absences_percent",
+  "incomplete_independent_study_absences_percent",
+  "excused_absences_count",
+  "unexcused_absences_count",
+  "out_of_school_suspension_absences_count",
+  "incomplete_independent_study_absences_count"
+)
+```
+
+```{r reader}
+read_absenteeism_file <- function(url, closure_year) {
+  read_tsv(
+    url,
+    skip = 1,
+    col_names = col_names,
+    col_types = cols(.default = col_character()),
+    na = c("", "NA")
+  ) |>
+    clean_names() |>
+    mutate(closure_year = closure_year)
+}
+
+df_absenteeism <- absenteeism_urls |>
+  mutate(data = map2(url, closure_year, read_absenteeism_file)) |>
+  select(data) |>
+  unnest(cols = data)
+```
+
+```{r inspect}
+df_absenteeism |>
+  count(academic_year, aggregate_level, reporting_category, sort = TRUE) |>
+  slice_head(n = 20)
+
+df_absenteeism |>
+  filter(aggregate_level == "S", reporting_category == "TA") |>
+  head()
+```
