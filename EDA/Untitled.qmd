@@ -1,0 +1,27 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+
+```
+
+```{r}
+skimr::skim(Annual_school_closures_and_standardized_test_scores_in_California_2003_2019)
+```
+
+```{r}
+df |>
+  mutate(
+    cause_sum = rowSums(
+      pick(days_wildfire, days_natural_disasters_weather, days_infrastructure,
+           days_student_safety, days_other),
+      na.rm = TRUE
+    ),
+    diff = days_total - cause_sum
+  ) |>
+  count(diff, sort = TRUE)
+```
