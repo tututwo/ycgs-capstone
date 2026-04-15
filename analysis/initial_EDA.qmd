@@ -88,10 +88,10 @@ burden_palette <- c(
 ## Load closure data
 
 ```{r load-closure-data}
-data_file <- "Annual school closures and standardized test scores in California, 2003-2019.csv"
+data_file <- "annual_school_closures_standardized_test_scores_ca_2003_2019.csv"
 data_path_candidates <- c(
-  file.path("..", "school_fire_data", data_file),
-  file.path("school_fire_data", data_file)
+  file.path("..", "data", "raw", "school_fire", data_file),
+  file.path("data", "raw", "school_fire", data_file)
 )
 
 data_path <- data_path_candidates[file.exists(data_path_candidates)][1]
@@ -694,8 +694,8 @@ chronic_absenteeism_numeric_vars <- c(
 
 resolve_attendance_source <- function(file_name, url) {
   source_candidates <- c(
-    file.path("..", "absenteeism_data", file_name),
-    file.path("absenteeism_data", file_name)
+    file.path("..", "data", "raw", "cde_attendance", file_name),
+    file.path("data", "raw", "cde_attendance", file_name)
   )
 
   local_source <- source_candidates[file.exists(source_candidates)][1]
@@ -945,7 +945,7 @@ county_chronic_absenteeism <- chronic_absenteeism_county_year |>
 
 if (nrow(county_chronic_absenteeism) == 0) {
   tibble(
-    chronic_absenteeism_status = "No county chronic absenteeism rows are available. Add local chronicabsenteeism18.txt and chronicabsenteeism19.txt files under absenteeism_data/ or rerun when CDE downloads are accessible."
+    chronic_absenteeism_status = "No county chronic absenteeism rows are available. Add local chronicabsenteeism18.txt and chronicabsenteeism19.txt files under data/raw/cde_attendance/ or rerun when CDE downloads are accessible."
   )
 } else {
   county_chronic_absenteeism |>
@@ -1215,9 +1215,11 @@ absence_reason_count_vars <- c(
   "incomplete_independent_study_absences_count"
 )
 
-read_absenteeism_file <- function(url, closure_year) {
+read_absenteeism_file <- function(file_name, url, closure_year) {
+  source <- resolve_attendance_source(file_name, url)
+
   readr::read_tsv(
-    url,
+    source,
     skip = 1,
     col_names = absenteeism_col_names,
     col_types = readr::cols(.default = readr::col_character()),
@@ -1226,13 +1228,17 @@ read_absenteeism_file <- function(url, closure_year) {
     clean_names() |>
     mutate(
       closure_year = closure_year,
-      source_url = url
+      source_url = source
     )
 }
 
 absenteeism_sources <- tibble(
   academic_year = analysis_year_labels,
   closure_year = analysis_years,
+  file_name = c(
+    "absenteeismreason18.txt",
+    "absenteeismreason19.txt"
+  ),
   url = c(
     "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason18.txt",
     "https://www3.cde.ca.gov/demo-downloads/attendance/absenteeismreason19.txt"
@@ -1240,7 +1246,7 @@ absenteeism_sources <- tibble(
 )
 
 absenteeism_raw <- absenteeism_sources |>
-  mutate(data = map2(url, closure_year, read_absenteeism_file)) |>
+  mutate(data = pmap(list(file_name, url, closure_year), read_absenteeism_file)) |>
   select(data) |>
   unnest(cols = data)
 
