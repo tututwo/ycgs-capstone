@@ -1,3 +1,18 @@
+# Project-specific local/generated files
+.DS_Store
+**/.DS_Store
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.quarto/
+*_cache/
+*_files/
+reports/*.html
+reports/*_files/
+data/raw/cde_attendance/*.txt
+!data/raw/cde_attendance/head_absenteeism_data.csv
+
 # Logs
 logs
 *.log

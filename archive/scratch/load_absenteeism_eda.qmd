@@ -4,6 +4,10 @@ format: html
 editor: visual
 ---
 
+> Archived scratch file. This exploratory loader is superseded by
+> `analysis/initial_EDA.qmd` and is not part of the reproducible capstone
+> workflow.
+
 ```{r setup}
 library(tidyverse)
 library(janitor)

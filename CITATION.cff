@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use or review this project, cite it as below."
+title: "California Wildfire School Closures and Absenteeism"
+authors:
+  - family-names: Tu
+    given-names: Gordon
+year: 2026
+version: 0.1.0
+repository-code: "https://github.com/tututwo/ycgs-capstone"
+type: software
+abstract: "A Yale Environmental Data Science capstone project analyzing California wildfire-related school closures, missed student-days, chronic absenteeism, and absence-reason patterns in 2017-18 and 2018-19."

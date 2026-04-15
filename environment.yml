@@ -1,0 +1,11 @@
+name: ycgs-capstone
+channels:
+  - conda-forge
+dependencies:
+  - quarto
+  - r-base>=4.3
+  - r-tidyverse
+  - r-janitor
+  - r-scales
+  - r-sf
+  - r-tinytex
