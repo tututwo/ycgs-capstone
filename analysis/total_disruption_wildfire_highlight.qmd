@@ -1,0 +1,228 @@
+---
+title: "Total Statewide Closure Days, With Wildfire Highlighted"
+format:
+  html:
+    fig-width: 11
+    fig-height: 7
+    fig-dpi: 180
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+library(scales)
+
+to_number <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "NULL", "*"))
+}
+
+safe_divide <- function(num, den) {
+  if_else(!is.na(den) & den > 0, num / den, NA_real_)
+}
+
+data_file <- "annual_school_closures_standardized_test_scores_ca_2003_2019.csv"
+data_path_candidates <- c(
+  file.path("..", "data", "raw", "school_fire", data_file),
+  file.path("data", "raw", "school_fire", data_file)
+)
+
+data_path <- data_path_candidates[file.exists(data_path_candidates)][1]
+if (is.na(data_path)) {
+  stop("Could not find the closure CSV. Check the relative path from this Quarto file.")
+}
+
+closure_data <- readr::read_csv(
+  data_path,
+  col_types = readr::cols(.default = readr::col_character()),
+  show_col_types = FALSE
+) |>
+  clean_names()
+
+if ("days_wildfires" %in% names(closure_data) && !"days_wildfire" %in% names(closure_data)) {
+  closure_data <- closure_data |>
+    rename(days_wildfire = days_wildfires)
+}
+
+statewide_by_year <- closure_data |>
+  mutate(
+    year = as.integer(year),
+    across(any_of(c("days_wildfire", "days_total")), to_number),
+    across(any_of(c("days_wildfire", "days_total")), ~ replace_na(.x, 0))
+  ) |>
+  group_by(year) |>
+  summarise(
+    days_wildfire = sum(days_wildfire, na.rm = TRUE),
+    days_total = sum(days_total, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    non_wildfire_days = pmax(days_total - days_wildfire, 0),
+    wildfire_share = safe_divide(days_wildfire, days_total)
+  ) |>
+  arrange(year)
+```
+
+```{r total-disruption-wildfire-highlight-editorial}
+#| fig-width: 11
+#| fig-height: 7
+year_levels <- statewide_by_year$year
+
+total_with_wildfire_component <- statewide_by_year |>
+  transmute(
+    year,
+    year_index = match(year, year_levels),
+    `Non-wildfire days` = non_wildfire_days,
+    Wildfire = days_wildfire
+  ) |>
+  pivot_longer(
+    cols = c(`Non-wildfire days`, Wildfire),
+    names_to = "component",
+    values_to = "closure_days"
+  ) |>
+  mutate(
+    component = factor(component, levels = c("Non-wildfire days", "Wildfire"))
+  )
+
+peak_labels <- statewide_by_year |>
+  slice_max(days_total, n = 2, with_ties = FALSE) |>
+  mutate(
+    year_index = match(year, year_levels),
+    label = str_glue(
+      "{year}\n{label_comma()(days_total)} total days\n{label_percent(accuracy = 1)(wildfire_share)} wildfire"
+    )
+  )
+
+end_labels <- statewide_by_year |>
+  filter(year == max(year, na.rm = TRUE)) |>
+  transmute(
+    year_index = match(year, year_levels),
+    wildfire_y = non_wildfire_days + days_wildfire / 2,
+    non_wildfire_y = non_wildfire_days / 2
+  )
+
+total_closure_plot <- ggplot(
+  total_with_wildfire_component,
+  aes(x = year_index, y = closure_days, fill = component)
+) +
+  geom_col(
+    width = 0.72,
+    color = "#F8F5EF",
+    linewidth = 0.28,
+    position = position_stack(reverse = TRUE)
+  ) +
+  geom_segment(
+    data = peak_labels,
+    aes(
+      x = year_index,
+      xend = year_index,
+      y = days_total + 120,
+      yend = days_total + 480
+    ),
+    inherit.aes = FALSE,
+    color = "#8F8B84",
+    linewidth = 0.35
+  ) +
+  geom_text(
+    data = peak_labels,
+    aes(x = year_index, y = days_total + 620, label = label),
+    inherit.aes = FALSE,
+    family = "sans",
+    fontface = "bold",
+    size = 3.15,
+    lineheight = 0.94,
+    color = "#2A2A2A"
+  ) +
+  geom_text(
+    data = end_labels,
+    aes(x = year_index + 0.65, y = wildfire_y, label = "Wildfire"),
+    inherit.aes = FALSE,
+    hjust = 0,
+    family = "sans",
+    fontface = "bold",
+    size = 3.4,
+    color = "#B2382E"
+  ) +
+  geom_text(
+    data = end_labels,
+    aes(x = year_index + 0.65, y = non_wildfire_y, label = "Non-wildfire"),
+    inherit.aes = FALSE,
+    hjust = 0,
+    family = "sans",
+    fontface = "bold",
+    size = 3.4,
+    color = "#6F6A63"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Non-wildfire days" = "#D7D1C7",
+      "Wildfire" = "#B2382E"
+    ),
+    guide = "none"
+  ) +
+  scale_x_continuous(
+    breaks = seq_along(year_levels),
+    labels = year_levels,
+    expand = expansion(add = c(0.4, 1.55))
+  ) +
+  scale_y_continuous(
+    labels = label_comma(),
+    breaks = seq(0, 7000, by = 1000),
+    expand = expansion(mult = c(0, 0.09))
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Wildfire years stand out in California school closures",
+    subtitle = "Statewide school closure days by academic-year ending year, 2003-2019. Red marks the portion attributed to wildfire.",
+    x = NULL,
+    y = "Statewide closure days",
+    caption = "Source: Annual school closures and standardized test scores in California, 2003-2019."
+  ) +
+  theme_minimal(base_size = 12, base_family = "sans") +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "#DED9D1", linewidth = 0.35),
+    panel.background = element_rect(fill = "#F8F5EF", color = NA),
+    plot.background = element_rect(fill = "#F8F5EF", color = NA),
+    plot.title = element_text(
+      family = "Georgia",
+      face = "bold",
+      size = 23,
+      color = "#111111",
+      margin = margin(b = 7)
+    ),
+    plot.subtitle = element_text(
+      size = 10.8,
+      color = "#4F4B45",
+      margin = margin(b = 24)
+    ),
+    plot.caption = element_text(
+      size = 8.5,
+      color = "#6B665F",
+      hjust = 0,
+      margin = margin(t = 14)
+    ),
+    axis.title.y = element_text(
+      size = 9.5,
+      color = "#5B554E",
+      margin = margin(r = 8)
+    ),
+    axis.text.x = element_text(size = 8.5, color = "#4E4A44", margin = margin(t = 6)),
+    axis.text.y = element_text(size = 8.5, color = "#5B554E", margin = margin(r = 7)),
+    axis.ticks.x = element_line(color = "#9B958C", linewidth = 0.25),
+    axis.ticks.length.x = unit(3, "pt"),
+    axis.line.x = element_line(color = "#2C2C2C", linewidth = 0.35),
+    plot.margin = margin(22, 62, 18, 24)
+  )
+
+total_closure_plot
+```
+
+```{r}
+write_csv(statewide_by_year, "statewide_by_year.csv")
+```
+

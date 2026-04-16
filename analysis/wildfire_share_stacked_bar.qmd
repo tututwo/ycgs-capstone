@@ -76,13 +76,15 @@ cause_lookup <- tibble(
   cause_code = c("WF", "WX", "IN", "SS", "OT")
 )
 
+
 stacked_bar_palette <- c(
-  "Wildfire" = "#B7342C",
-  "Natural disasters/weather" = "#5E8DB7",
-  "Infrastructure" = "#D8A24A",
-  "Student safety" = "#8A7A5C",
+  "Wildfire" = "#EA6D4B",
+  "Natural disasters/weather" = "#49AFA1",
+  "Infrastructure" = "#254655",
+  "Student safety" = "#F4A35B",
   "Other" = "#B8B8B8"
 )
+
 ```
 
 ```{r wildfire-share-stacked-bar}
@@ -245,3 +247,22 @@ stacked_bar_plot <- ggplot(
 
 stacked_bar_plot
 ```
+
+```{r}
+write_csv(statewide_share, "statewide_share.csv")
+```
+
+```{r}
+year_levels
+```
+```{r}
+ggsave(
+  filename = "stacked_bar_plot.png",
+  plot = stacked_bar_plot,
+  width = 14,
+  height = 7.2,
+  units = "in",
+  dpi = 300
+)
+```
+

@@ -63,6 +63,14 @@ pad_code <- function(x, width) {
   if_else(digits == "", NA_character_, str_pad(digits, width = width, side = "left", pad = "0"))
 }
 
+first_non_missing <- function(x) {
+  x <- x[!is.na(x) & x != ""]
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  x[[1]]
+}
+
 year_breaks <- function(x) {
   seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), by = 2)
 }
@@ -145,6 +153,7 @@ df <- df |>
     school_site = str_squish(school_site),
     cds_code_raw = cds_code,
     cds_code = clean_cds_code(cds_code),
+    cd_code = str_sub(cds_code, 1, 7),
     across(any_of(closure_numeric_vars), to_number),
     across(any_of(primary_cause_vars), ~ replace_na(.x, 0)),
     days_total = replace_na(days_total, 0),
@@ -389,7 +398,7 @@ county_window_burden <- closure_window |>
   summarise(
     school_year_rows = n(),
     schools = n_distinct(cds_code),
-    districts = n_distinct(district_name),
+    districts = n_distinct(cd_code),
     total_enrollment_school_years = sum(total_enrollment, na.rm = TRUE),
     wildfire_days = sum(days_wildfire, na.rm = TRUE),
     total_closure_days = sum(days_total, na.rm = TRUE),
@@ -401,19 +410,25 @@ county_window_burden <- closure_window |>
   filter(!is.na(county), county != "")
 
 district_window_burden <- closure_window |>
-  group_by(county, district_name) |>
+  filter(!is.na(cd_code)) |>
+  group_by(cd_code) |>
   summarise(
+    county = first_non_missing(county),
+    district_name = first_non_missing(district_name),
     school_year_rows = n(),
     schools = n_distinct(cds_code),
+    wildfire_affected_schools = n_distinct(cds_code[days_wildfire > 0]),
+    pct_schools_with_wildfire = safe_divide(wildfire_affected_schools, schools),
     total_enrollment_school_years = sum(total_enrollment, na.rm = TRUE),
     wildfire_days = sum(days_wildfire, na.rm = TRUE),
     total_closure_days = sum(days_total, na.rm = TRUE),
     wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    missed_student_days_per_1000_student_years = 1000 *
+      safe_divide(wildfire_student_days, total_enrollment_school_years),
     avg_wildfire_days_per_school_year = safe_divide(wildfire_days, school_year_rows),
     wildfire_share_of_total = safe_divide(wildfire_days, total_closure_days),
     .groups = "drop"
-  ) |>
-  filter(!is.na(district_name), district_name != "")
+  )
 
 school_window_burden <- closure_window |>
   group_by(cds_code, county, district_name, school_site) |>
@@ -477,18 +492,27 @@ top_n_districts <- 25
 district_window_burden |>
   arrange(desc(wildfire_student_days)) |>
   select(
+    cd_code,
     county,
     district_name,
     schools,
+    wildfire_affected_schools,
     wildfire_days,
     wildfire_student_days,
+    missed_student_days_per_1000_student_years,
     avg_wildfire_days_per_school_year,
     wildfire_share_of_total
   ) |>
   slice_head(n = top_n_districts)
 
 district_window_burden |>
-  mutate(district_label = str_c(str_trunc(district_name, 42), " (", county, ")")) |>
+  mutate(
+    district_label = if_else(
+      !is.na(district_name),
+      str_c(str_trunc(district_name, 42), " (", county, ")"),
+      str_c("District code ", cd_code)
+    )
+  ) |>
   slice_max(wildfire_student_days, n = 18, with_ties = FALSE) |>
   ggplot(aes(x = wildfire_student_days, y = fct_reorder(district_label, wildfire_student_days))) +
   geom_col(fill = "#B95A3C", alpha = 0.9) +
@@ -673,9 +697,297 @@ if (!is.null(county_map_data)) {
 }
 ```
 
+### District maps
+
+District maps answer a different question than county maps: they show whether wildfire disruption is concentrated in specific school district geographies within counties. These maps use 2024-25 district boundaries as reference geography for 2017-18 and 2018-19 outcomes, so they are descriptive and may not perfectly represent historical district boundaries.
+
+Because elementary and high school district areas can overlap, the choropleths below are faceted by district type instead of drawn as one single statewide district layer.
+
+```{r district-map-data}
+district_shape_path_candidates <- c(
+  file.path("..", "data", "raw", "DistrictAreas2425", "DistrictAreas2425.shp"),
+  file.path("data", "raw", "DistrictAreas2425", "DistrictAreas2425.shp")
+)
+
+district_shape_path <- district_shape_path_candidates[file.exists(district_shape_path_candidates)][1]
+
+load_district_shapes <- function(path) {
+  if (!requireNamespace("sf", quietly = TRUE)) {
+    message("Package 'sf' is not installed; skipping district map chunks.")
+    return(NULL)
+  }
+
+  if (is.na(path)) {
+    message("District shapefile is unavailable; skipping district map chunks.")
+    return(NULL)
+  }
+
+  tryCatch(
+    {
+      sf::st_read(path, quiet = TRUE) |>
+        sf::st_make_valid() |>
+        mutate(
+          cd_code = str_pad(as.character(CDCode), width = 7, side = "left", pad = "0"),
+          district_shape_name = DistrictNa,
+          county_shape = CountyName,
+          district_type = DistrictTy,
+          shape_enrollment = to_number(EnrollTota)
+        ) |>
+        select(
+          cd_code,
+          district_shape_name,
+          county_shape,
+          district_type,
+          shape_enrollment,
+          geometry
+        ) |>
+        sf::st_transform(3310)
+    },
+    error = function(e) {
+      message("District shapefile read failed; skipping district maps. Error: ", conditionMessage(e))
+      NULL
+    }
+  )
+}
+
+district_shapes <- load_district_shapes(district_shape_path)
+
+if (is.null(district_shapes)) {
+  district_shape_codes <- tibble(cd_code = character())
+  district_map_data <- NULL
+} else {
+  district_shape_codes <- district_shapes |>
+    sf::st_drop_geometry() |>
+    distinct(cd_code)
+
+  district_map_data <- district_shapes |>
+    left_join(district_window_burden, by = "cd_code") |>
+    mutate(
+      has_closure_record = !is.na(school_year_rows),
+      district_label = coalesce(district_name, district_shape_name),
+      wildfire_student_days_map = if_else(
+        has_closure_record,
+        replace_na(wildfire_student_days, 0),
+        NA_real_
+      ),
+      missed_student_days_per_1000_student_years_map = if_else(
+        has_closure_record,
+        replace_na(missed_student_days_per_1000_student_years, 0),
+        NA_real_
+      ),
+      pct_schools_with_wildfire_map = if_else(
+        has_closure_record,
+        replace_na(pct_schools_with_wildfire, 0),
+        NA_real_
+      ),
+      wildfire_share_of_total_map = if_else(
+        has_closure_record,
+        wildfire_share_of_total,
+        NA_real_
+      )
+    )
+}
+
+district_shape_duplicate_codes <- if (is.null(district_shapes)) {
+  tibble(cd_code = character(), n = integer())
+} else {
+  district_shapes |>
+    sf::st_drop_geometry() |>
+    count(cd_code, sort = TRUE) |>
+    filter(n > 1)
+}
+
+district_shape_join_coverage <- if (is.null(district_shapes)) {
+  tibble(
+    metric = "district_shape_status",
+    value = NA_real_,
+    note = "District shapefile unavailable."
+  )
+} else {
+  tibble(
+    metric = c(
+      "district_shape_rows",
+      "closure_districts",
+      "closure_districts_matched_to_shape",
+      "closure_district_match_rate",
+      "wildfire_districts",
+      "wildfire_districts_matched_to_shape",
+      "unmatched_wildfire_districts",
+      "matched_wildfire_student_days_share",
+      "shape_districts_not_in_closure_window"
+    ),
+    value = c(
+      nrow(district_shapes),
+      nrow(district_window_burden),
+      sum(district_window_burden$cd_code %in% district_shape_codes$cd_code),
+      safe_divide(
+        sum(district_window_burden$cd_code %in% district_shape_codes$cd_code),
+        nrow(district_window_burden)
+      ),
+      sum(district_window_burden$wildfire_days > 0, na.rm = TRUE),
+      sum(
+        district_window_burden$wildfire_days > 0 &
+          district_window_burden$cd_code %in% district_shape_codes$cd_code,
+        na.rm = TRUE
+      ),
+      sum(
+        district_window_burden$wildfire_days > 0 &
+          !(district_window_burden$cd_code %in% district_shape_codes$cd_code),
+        na.rm = TRUE
+      ),
+      safe_divide(
+        sum(
+          district_window_burden$wildfire_student_days[
+            district_window_burden$cd_code %in% district_shape_codes$cd_code
+          ],
+          na.rm = TRUE
+        ),
+        sum(district_window_burden$wildfire_student_days, na.rm = TRUE)
+      ),
+      sum(!(district_shape_codes$cd_code %in% district_window_burden$cd_code))
+    ),
+    note = NA_character_
+  )
+}
+
+district_shape_duplicate_codes
+district_shape_join_coverage
+```
+
+```{r unmatched-district-shape-burden}
+unmatched_district_burden <- district_window_burden |>
+  anti_join(district_shape_codes, by = "cd_code") |>
+  filter(wildfire_days > 0) |>
+  arrange(desc(wildfire_student_days)) |>
+  select(
+    cd_code,
+    county,
+    district_name,
+    schools,
+    wildfire_affected_schools,
+    wildfire_days,
+    wildfire_student_days,
+    missed_student_days_per_1000_student_years,
+    wildfire_share_of_total
+  )
+
+unmatched_district_burden |>
+  slice_head(n = 25)
+```
+
+```{r district-map-helpers}
+district_fire_colors <- c("#EEECE6", "#F3C48A", "#D97145", "#8C2D19")
+
+district_map_theme <- theme_void() +
+  theme(
+    strip.text = element_text(face = "bold", size = 10),
+    legend.position = "right",
+    plot.caption = element_text(color = "grey35", size = 8, hjust = 0)
+  )
+
+district_map_caption <- "District polygons use 2024-25 CDE district areas. Elementary and high school districts can overlap, so maps are faceted by district type. Pale areas indicate no closure match or no mapped data."
+```
+
+```{r district-map-wildfire-student-days, fig.width=11, fig.height=5.8}
+if (!is.null(district_map_data)) {
+  district_map_data |>
+    filter(district_type %in% c("Elementary", "High", "Unified")) |>
+    ggplot() +
+    geom_sf(
+      aes(fill = wildfire_student_days_map),
+      color = "white",
+      linewidth = 0.03
+    ) +
+    facet_wrap(vars(district_type), nrow = 1) +
+    scale_fill_gradientn(
+      colors = district_fire_colors,
+      transform = "sqrt",
+      labels = label_comma(),
+      na.value = "#FBFAF7",
+      name = "Missed\nstudent-days"
+    ) +
+    labs(
+      title = "Wildfire missed student-days by school district",
+      subtitle = "Raw burden combines closure days and school-year enrollment, 2017-18 and 2018-19",
+      caption = district_map_caption
+    ) +
+    district_map_theme
+}
+```
+
+```{r district-map-normalized-burden, fig.width=11, fig.height=5.8}
+if (!is.null(district_map_data)) {
+  district_map_data |>
+    filter(district_type %in% c("Elementary", "High", "Unified")) |>
+    ggplot() +
+    geom_sf(
+      aes(fill = missed_student_days_per_1000_student_years_map),
+      color = "white",
+      linewidth = 0.03
+    ) +
+    facet_wrap(vars(district_type), nrow = 1) +
+    scale_fill_gradientn(
+      colors = district_fire_colors,
+      labels = label_number(accuracy = 1),
+      na.value = "#FBFAF7",
+      name = "Missed days\nper 1,000"
+    ) +
+    labs(
+      title = "Wildfire burden normalized by district enrollment",
+      subtitle = "Wildfire missed student-days per 1,000 enrolled student-years, 2017-18 and 2018-19",
+      caption = district_map_caption
+    ) +
+    district_map_theme
+}
+```
+
+```{r district-map-school-reach, fig.width=11, fig.height=5.8}
+if (!is.null(district_map_data)) {
+  district_map_data |>
+    filter(district_type %in% c("Elementary", "High", "Unified")) |>
+    ggplot() +
+    geom_sf(
+      aes(fill = pct_schools_with_wildfire_map),
+      color = "white",
+      linewidth = 0.03
+    ) +
+    facet_wrap(vars(district_type), nrow = 1) +
+    scale_fill_gradientn(
+      colors = district_fire_colors,
+      labels = label_percent(accuracy = 1),
+      na.value = "#FBFAF7",
+      name = "Schools with\nwildfire closures"
+    ) +
+    labs(
+      title = "How widespread were wildfire closures within districts?",
+      subtitle = "Share of observed schools in each district with at least one wildfire closure day",
+      caption = district_map_caption
+    ) +
+    district_map_theme
+}
+```
+
+```{r district-wildfire-dominance}
+district_window_burden |>
+  filter(wildfire_days > 0, total_closure_days > 0) |>
+  arrange(desc(wildfire_share_of_total), desc(wildfire_student_days)) |>
+  select(
+    cd_code,
+    county,
+    district_name,
+    schools,
+    wildfire_affected_schools,
+    wildfire_days,
+    total_closure_days,
+    wildfire_share_of_total,
+    wildfire_student_days
+  ) |>
+  slice_head(n = 25)
+```
+
 ### Step 2 takeaway
 
-Wildfire burden is widespread but uneven. In the 2017-18 and 2018-19 window, many counties, districts, and schools have some wildfire closure burden, but missed student-days are concentrated in a much smaller set of places. District counts can vary depending on whether districts are counted as county-district pairs or by district name alone; this notebook uses county-district pairs for the district burden tables because district names are not guaranteed to be unique statewide.
+Wildfire burden is widespread but uneven. In the 2017-18 and 2018-19 window, many counties, districts, and schools have some wildfire closure burden, but missed student-days are concentrated in a much smaller set of places. District tables and maps use the seven-digit county-district `CDCode` derived from school CDS codes because district names are not guaranteed to be unique statewide. The district choropleths exclude unmatched administrative districts that do not have 2024-25 district-area polygons, so the unmatched-district table should be read alongside the maps.
 
 ## Step 3: Which counties have the highest chronic absenteeism rates?
 
@@ -1265,6 +1577,11 @@ absenteeism_schools <- absenteeism_raw |>
       str_c(county_code_clean, district_code_clean, school_code_clean),
       NA_character_
     ),
+    cd_code = if_else(
+      !is.na(county_code_clean) & !is.na(district_code_clean),
+      str_c(county_code_clean, district_code_clean),
+      NA_character_
+    ),
     across(all_of(absenteeism_numeric_vars), to_number),
     county_name = str_squish(str_to_title(county_name)),
     district_name = str_squish(district_name),
@@ -1337,6 +1654,7 @@ absenteeism_schools |>
 closure_school_year <- closure_window |>
   group_by(cds_code, closure_year) |>
   summarise(
+    cd_code = first(cd_code),
     academic_year = first(academic_year),
     county = first(county),
     district_name = first(district_name),
@@ -1706,6 +2024,123 @@ ggplot(
 ```
 
 This county view supplements the chronic absenteeism county analysis with absence-day measures from the Absenteeism by Reason files. It does not estimate the effect of wildfire closures on absence days; counties differ in many ways that are not controlled here.
+
+### District-level absence-day bridge (Absenteeism by Reason)
+
+```{r district-absenteeism-bridge}
+district_absenteeism_bridge <- closure_absenteeism_joined |>
+  filter(!is.na(avg_days_absent_per_eligible), !is.na(cd_code)) |>
+  group_by(cd_code) |>
+  summarise(
+    county = first_non_missing(county),
+    district_name = first_non_missing(district_name),
+    school_year_rows = n(),
+    schools = n_distinct(cds_code),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    eligible_cumulative_enrollment = sum(eligible_cumulative_enrollment, na.rm = TRUE),
+    count_students_one_or_more_absences = sum(count_students_one_or_more_absences, na.rm = TRUE),
+    total_days_absent = sum(total_days_absent, na.rm = TRUE),
+    share_students_with_absence = safe_divide(
+      count_students_one_or_more_absences,
+      eligible_cumulative_enrollment
+    ),
+    avg_days_absent_per_eligible = safe_divide(
+      total_days_absent,
+      eligible_cumulative_enrollment
+    ),
+    .groups = "drop"
+  ) |>
+  mutate(any_wildfire_burden = wildfire_student_days > 0)
+
+district_absenteeism_bridge |>
+  arrange(desc(wildfire_student_days)) |>
+  select(
+    cd_code,
+    county,
+    district_name,
+    school_year_rows,
+    schools,
+    wildfire_days,
+    wildfire_student_days,
+    eligible_cumulative_enrollment,
+    avg_days_absent_per_eligible,
+    share_students_with_absence
+  ) |>
+  slice_head(n = 25)
+
+ggplot(
+  district_absenteeism_bridge,
+  aes(x = wildfire_student_days, y = avg_days_absent_per_eligible)
+) +
+  geom_point(
+    aes(size = eligible_cumulative_enrollment, color = any_wildfire_burden),
+    alpha = 0.58
+  ) +
+  geom_smooth(method = "lm", se = FALSE, color = "#4A5568", linewidth = 0.7) +
+  scale_x_continuous(
+    trans = pseudo_log_trans(base = 10),
+    labels = label_comma()
+  ) +
+  scale_y_continuous(labels = label_number(accuracy = 0.1)) +
+  scale_size_continuous(labels = label_comma(), guide = "none") +
+  scale_color_manual(
+    values = c("FALSE" = "#BFC3C7", "TRUE" = "#C7432B"),
+    labels = c("No wildfire burden", "Any wildfire burden"),
+    name = NULL
+  ) +
+  labs(
+    title = "District wildfire burden and absenteeism patterns",
+    subtitle = "District summaries aggregate matched school-year rows; descriptive only",
+    x = "Wildfire missed student-days",
+    y = "Average days absent per eligible student"
+  ) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r district-absenteeism-map, fig.width=11, fig.height=5.8}
+district_absenteeism_map_data <- if (!is.null(district_shapes)) {
+  district_shapes |>
+    left_join(district_absenteeism_bridge, by = "cd_code") |>
+    mutate(
+      has_absenteeism_bridge = !is.na(school_year_rows),
+      avg_days_absent_per_eligible_map = if_else(
+        has_absenteeism_bridge,
+        avg_days_absent_per_eligible,
+        NA_real_
+      )
+    )
+} else {
+  NULL
+}
+
+if (!is.null(district_absenteeism_map_data)) {
+  district_absenteeism_map_data |>
+    filter(district_type %in% c("Elementary", "High", "Unified")) |>
+    ggplot() +
+    geom_sf(
+      aes(fill = avg_days_absent_per_eligible_map),
+      color = "white",
+      linewidth = 0.03
+    ) +
+    facet_wrap(vars(district_type), nrow = 1) +
+    scale_fill_gradientn(
+      colors = c("#F2F0EA", "#BFD8C2", "#5E9B83", "#1F5D5B"),
+      labels = label_number(accuracy = 0.1),
+      na.value = "#FBFAF7",
+      name = "Avg days\nabsent"
+    ) +
+    labs(
+      title = "Average absence days per eligible student by school district",
+      subtitle = "Absenteeism by Reason records aggregated from matched school-years, 2017-18 and 2018-19",
+      caption = district_map_caption
+    ) +
+    district_map_theme
+}
+```
 
 ### High-burden school profiles
 
