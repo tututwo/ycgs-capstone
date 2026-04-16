@@ -153,6 +153,3 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 fire_data
-
-/.quarto/
-**/*.quarto_ipynb
