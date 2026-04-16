@@ -1,0 +1,891 @@
+---
+title: "Flagship Visualization: Wildfire Disruption and Chronic Absenteeism"
+format:
+  html:
+    toc: false
+    code-fold: true
+    fig-width: 13
+    fig-height: 8
+    fig-dpi: 320
+  pdf:
+    fig-width: 13
+    fig-height: 8
+execute:
+  warning: false
+  message: false
+editor: visual
+---
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+library(sf)
+library(scales)
+library(grid)
+
+theme_set(theme_minimal(base_family = "sans", base_size = 12))
+
+analysis_years <- c(2018, 2019)
+analysis_year_labels <- c("2017-18", "2018-19")
+
+to_number <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "NULL", "*"))
+}
+
+safe_divide <- function(num, den) {
+  if_else(!is.na(den) & den > 0, num / den, NA_real_)
+}
+
+clean_cds_code <- function(x) {
+  digits <- str_remove_all(coalesce(as.character(x), ""), "\\D")
+  if_else(digits == "", NA_character_, str_pad(digits, width = 14, side = "left", pad = "0"))
+}
+
+pad_code <- function(x, width) {
+  digits <- str_remove_all(coalesce(as.character(x), ""), "\\D")
+  if_else(digits == "", NA_character_, str_pad(digits, width = width, side = "left", pad = "0"))
+}
+
+first_existing_path <- function(candidates, missing_message) {
+  path <- candidates[file.exists(candidates)][1]
+  if (is.na(path)) {
+    stop(missing_message)
+  }
+  path
+}
+
+label_short_count <- function(x) {
+  case_when(
+    is.na(x) ~ NA_character_,
+    abs(x) >= 999500 ~ str_c(number(x / 1000000, accuracy = 0.1, trim = TRUE), "M"),
+    x >= 1000 ~ str_c(number(x / 1000, accuracy = 1, trim = TRUE), "K"),
+    TRUE ~ number(x, accuracy = 1, trim = TRUE)
+  )
+}
+```
+
+```{r load-and-summarize-closures}
+closure_path <- first_existing_path(
+  c(
+    file.path("..", "data", "raw", "school_fire", "annual_school_closures_standardized_test_scores_ca_2003_2019.csv"),
+    file.path("data", "raw", "school_fire", "annual_school_closures_standardized_test_scores_ca_2003_2019.csv")
+  ),
+  "Could not find the school closure CSV under data/raw/school_fire/."
+)
+
+closures <- readr::read_csv(
+  closure_path,
+  col_types = readr::cols(
+    cds_code = readr::col_character(),
+    .default = readr::col_guess()
+  ),
+  show_col_types = FALSE
+) |>
+  clean_names()
+
+if ("days_wildfires" %in% names(closures) && !"days_wildfire" %in% names(closures)) {
+  closures <- closures |>
+    rename(days_wildfire = days_wildfires)
+}
+
+primary_cause_vars <- c(
+  "days_wildfire",
+  "days_natural_disasters_weather",
+  "days_infrastructure",
+  "days_student_safety",
+  "days_other"
+)
+
+closure_numeric_vars <- c(
+  primary_cause_vars,
+  "days_quarantine",
+  "days_safety_other",
+  "days_total",
+  "total_enrollment"
+)
+
+closures_clean <- closures |>
+  mutate(
+    year = as.integer(year),
+    closure_year = year,
+    county = str_squish(str_to_title(county)),
+    cds_code = clean_cds_code(cds_code),
+    cd_code = str_sub(cds_code, 1, 7),
+    across(any_of(closure_numeric_vars), to_number),
+    across(any_of(primary_cause_vars), ~ replace_na(.x, 0)),
+    days_total = replace_na(days_total, 0),
+    total_enrollment = replace_na(total_enrollment, 0),
+    wildfire_student_days = days_wildfire * total_enrollment
+  )
+
+county_wildfire <- closures_clean |>
+  filter(year %in% analysis_years) |>
+  group_by(county) |>
+  summarise(
+    schools = n_distinct(cds_code),
+    districts = n_distinct(cd_code),
+    enrolled_student_years = sum(total_enrollment, na.rm = TRUE),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    total_closure_days = sum(days_total, na.rm = TRUE),
+    wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    wildfire_days_per_1k_students = 1000 * safe_divide(
+      wildfire_student_days,
+      enrolled_student_years
+    ),
+    wildfire_share_of_closure_days = safe_divide(wildfire_days, total_closure_days),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(county), county != "")
+```
+
+```{r load-and-summarize-chronic-absenteeism}
+resolve_attendance_source <- function(file_name, url) {
+  candidates <- c(
+    file.path("..", "data", "raw", "cde_attendance", file_name),
+    file.path("data", "raw", "cde_attendance", file_name)
+  )
+
+  local_source <- candidates[file.exists(candidates)][1]
+  if (!is.na(local_source)) {
+    return(local_source)
+  }
+
+  url
+}
+
+standardize_chronic_absenteeism_names <- function(data) {
+  if ("charter_yn" %in% names(data) && !"charter" %in% names(data)) {
+    data <- data |>
+      rename(charter = charter_yn)
+  }
+
+  if (!"dass" %in% names(data)) {
+    data <- data |>
+      mutate(dass = "All")
+  }
+
+  eligible_col <- names(data)[str_detect(names(data), "^chronic_absenteeism_eligible")]
+  if (
+    !"chronic_absenteeism_eligible_cumulative_enrollment" %in% names(data) &&
+      length(eligible_col) > 0
+  ) {
+    data <- data |>
+      rename(chronic_absenteeism_eligible_cumulative_enrollment = all_of(eligible_col[1]))
+  }
+
+  if ("chronic_absenteeism_rate" %in% names(data)) {
+    data <- data |>
+      rename(chronic_absenteeism_rate_reported = chronic_absenteeism_rate)
+  }
+
+  data
+}
+
+read_tsv_source <- function(source) {
+  if (file.exists(source)) {
+    return(
+      readr::read_tsv(
+        source,
+        col_types = readr::cols(.default = readr::col_character()),
+        na = c("", "NA"),
+        show_col_types = FALSE
+      )
+    )
+  }
+
+  old_timeout <- getOption("timeout")
+  options(timeout = 45)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  lines <- readLines(source, warn = FALSE)
+  lines <- iconv(lines, from = "", to = "UTF-8", sub = "byte")
+
+  if (
+    length(lines) < 2 ||
+      str_detect(str_to_lower(lines[1]), "<html|<!doctype|wafalert")
+  ) {
+    stop("Attendance source did not return a tab-delimited data file.")
+  }
+
+  readr::read_tsv(
+    I(paste(lines, collapse = "\n")),
+    col_types = readr::cols(.default = readr::col_character()),
+    na = c("", "NA"),
+    show_col_types = FALSE
+  )
+}
+
+read_chronic_absenteeism_file <- function(file_name, url, closure_year) {
+  source <- resolve_attendance_source(file_name, url)
+
+  read_tsv_source(source) |>
+    clean_names() |>
+    standardize_chronic_absenteeism_names() |>
+    mutate(closure_year = closure_year)
+}
+
+chronic_sources <- tibble(
+  closure_year = analysis_years,
+  file_name = c(
+    "chronicabsenteeism18.txt",
+    "chronicabsenteeism19.txt"
+  ),
+  url = c(
+    "https://www3.cde.ca.gov/demo-downloads/attendance/chronicabsenteeism18.txt",
+    "https://www3.cde.ca.gov/demo-downloads/attendance/chronicabsenteeism19.txt"
+  )
+)
+
+chronic_numeric_vars <- c(
+  "chronic_absenteeism_eligible_cumulative_enrollment",
+  "chronic_absenteeism_count",
+  "chronic_absenteeism_rate_reported"
+)
+
+county_chronic <- chronic_sources |>
+  mutate(data = pmap(list(file_name, url, closure_year), read_chronic_absenteeism_file)) |>
+  select(data) |>
+  unnest(cols = data) |>
+  filter(
+    aggregate_level == "C",
+    reporting_category == "TA",
+    str_to_lower(charter) == "all",
+    str_to_lower(dass) == "all"
+  ) |>
+  mutate(
+    county_name = str_squish(str_to_title(county_name)),
+    across(all_of(chronic_numeric_vars), to_number)
+  ) |>
+  group_by(county_name) |>
+  summarise(
+    chronic_absenteeism_eligible_enrollment = sum(
+      chronic_absenteeism_eligible_cumulative_enrollment,
+      na.rm = TRUE
+    ),
+    chronic_absenteeism_count = sum(chronic_absenteeism_count, na.rm = TRUE),
+    pooled_chronic_absenteeism_rate = safe_divide(
+      chronic_absenteeism_count,
+      chronic_absenteeism_eligible_enrollment
+    ),
+    .groups = "drop"
+  )
+```
+
+```{r prepare-map-data}
+load_ca_counties <- function() {
+  if (!requireNamespace("sf", quietly = TRUE)) {
+    stop("Package 'sf' is required for the county map.")
+  }
+
+  old_timeout <- getOption("timeout")
+  options(timeout = 60)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  county_zip_url <- "https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_500k.zip"
+  zip_path <- tempfile(fileext = ".zip")
+  unzip_dir <- tempfile()
+  dir.create(unzip_dir)
+
+  download.file(county_zip_url, zip_path, mode = "wb", quiet = TRUE)
+  unzip(zip_path, exdir = unzip_dir)
+  shp_path <- list.files(unzip_dir, pattern = "\\.shp$", full.names = TRUE)[1]
+
+  sf::st_read(shp_path, quiet = TRUE) |>
+    filter(STATEFP == "06") |>
+    sf::st_transform(3310)
+}
+
+ca_counties <- load_ca_counties()
+
+county_map <- ca_counties |>
+  left_join(county_wildfire, by = c("NAME" = "county")) |>
+  left_join(county_chronic, by = c("NAME" = "county_name")) |>
+  mutate(
+    wildfire_student_days = replace_na(wildfire_student_days, 0),
+    wildfire_days = replace_na(wildfire_days, 0),
+    enrolled_student_years = replace_na(enrolled_student_years, 0),
+    wildfire_days_per_1k_students = safe_divide(
+      1000 * wildfire_student_days,
+      enrolled_student_years
+    )
+  )
+
+county_fire_cutoff <- county_map |>
+  st_drop_geometry() |>
+  filter(wildfire_student_days > 0) |>
+  summarise(cutoff = quantile(wildfire_student_days, 0.75, na.rm = TRUE)) |>
+  pull(cutoff)
+
+county_absenteeism_median <- county_map |>
+  st_drop_geometry() |>
+  summarise(median_rate = median(pooled_chronic_absenteeism_rate, na.rm = TRUE)) |>
+  pull(median_rate)
+
+county_map <- county_map |>
+  mutate(
+    top_wildfire_burden = wildfire_student_days >= county_fire_cutoff,
+    overlap_group = case_when(
+      top_wildfire_burden & pooled_chronic_absenteeism_rate >= county_absenteeism_median ~
+        "High wildfire, high absenteeism",
+      top_wildfire_burden & pooled_chronic_absenteeism_rate < county_absenteeism_median ~
+        "High wildfire, lower absenteeism",
+      !top_wildfire_burden & pooled_chronic_absenteeism_rate >= county_absenteeism_median ~
+        "Lower wildfire, high absenteeism",
+      TRUE ~ "Lower wildfire, lower absenteeism"
+    )
+  )
+
+county_points <- county_map |>
+  sf::st_point_on_surface()
+
+point_coords <- sf::st_coordinates(county_points)
+
+county_points <- county_points |>
+  mutate(
+    point_x = point_coords[, 1],
+    point_y = point_coords[, 2]
+  )
+
+county_plot_data <- county_points |>
+  sf::st_drop_geometry()
+
+label_positions <- tribble(
+  ~NAME, ~label_x, ~label_y, ~label_note,
+  "Ventura", -125000, -360000, "Ventura",
+  "Sonoma", -355000, 85000, "Sonoma",
+  "Los Angeles", 35000, -455000, "Los Angeles",
+  "Butte", -230000, 220000, "Butte",
+  "Lake", -347000, 145000, "Lake",
+  "Napa", -304000, 27000, "Napa",
+  "Inyo", 330000, -98000, "Inyo",
+  "Nevada", -154000, 153000, "Nevada",
+  "Plumas", -25000, 266000, "Plumas",
+  "San Francisco", -354000, -47000, "San Francisco"
+)
+
+label_data <- county_plot_data |>
+  inner_join(label_positions, by = "NAME")
+```
+
+```{r build-plot-objects}
+map_fill_colors <- c(
+  "#f5f1e6",
+  "#d5d8be",
+  "#9ab6aa",
+  "#4f8f91",
+  "#1f555b"
+)
+
+fire_orange <- "#b64a2f"
+ink <- "#1f1f1f"
+soft_ink <- "#555555"
+paper <- "#fbfaf7"
+county_line <- "#ffffff"
+
+map_title_text <- "Wildfire disruption was concentrated in a few California counties"
+map_subtitle_text <- str_wrap(
+  str_c(
+    "County color shows pooled chronic absenteeism. Circle area shows wildfire missed student-days, ",
+    "with orange rings marking the top quarter of wildfire-affected counties."
+  ),
+  width = 118
+)
+relationship_title_text <- "The counties hit hardest by wildfire were not always the most chronically absent"
+relationship_subtitle_text <- str_wrap(
+  str_c(
+    "The vertical line marks the top quarter of wildfire-affected counties. ",
+    "The horizontal line marks the statewide county median chronic absenteeism rate."
+  ),
+  width = 118
+)
+shared_caption_text <- str_wrap(
+  str_c(
+    "Sources: California school closure records; California Department of Education chronic absenteeism files. ",
+    "Wildfire missed student-days = wildfire closure days x school-year enrollment. ",
+    "Descriptive county-level comparison, not a causal estimate."
+  ),
+  width = 176
+)
+
+legend_breaks_fire <- c(100000, 250000, 500000, 1000000)
+
+base_map <- ggplot() +
+  geom_sf(
+    data = county_map,
+    aes(fill = pooled_chronic_absenteeism_rate),
+    color = county_line,
+    linewidth = 0.23
+  ) +
+  geom_sf(
+    data = county_points |> filter(wildfire_student_days > 0),
+    aes(size = wildfire_student_days),
+    shape = 21,
+    fill = "#ffffff",
+    color = fire_orange,
+    alpha = 0.72,
+    stroke = 0.7
+  ) +
+  geom_sf(
+    data = county_points |> filter(top_wildfire_burden),
+    aes(size = wildfire_student_days),
+    shape = 21,
+    fill = NA,
+    color = fire_orange,
+    stroke = 1.45,
+    alpha = 0.95
+  ) +
+  geom_segment(
+    data = label_data,
+    aes(x = label_x, y = label_y, xend = point_x, yend = point_y),
+    linewidth = 0.25,
+    color = "#767676"
+  ) +
+  geom_text(
+    data = label_data,
+    aes(
+      x = label_x,
+      y = label_y,
+      label = label_note
+    ),
+    family = "sans",
+    fontface = "bold",
+    size = 3.1,
+    lineheight = 0.95,
+    color = ink
+  ) +
+  scale_fill_gradientn(
+    colors = map_fill_colors,
+    labels = label_percent(accuracy = 1),
+    name = "Chronic\nabsenteeism",
+    guide = guide_colorbar(
+      title.position = "top",
+      title.hjust = 0,
+      barheight = unit(65, "pt"),
+      barwidth = unit(8, "pt")
+    )
+  ) +
+  scale_size_area(
+    max_size = 24,
+    breaks = legend_breaks_fire,
+    labels = label_short_count,
+    name = "Wildfire missed\nstudent-days",
+    guide = guide_legend(
+      title.position = "top",
+      title.hjust = 0,
+      override.aes = list(
+        shape = 21,
+        fill = "#ffffff",
+        color = fire_orange,
+        alpha = 0.75,
+        stroke = 0.7
+      )
+    )
+  ) +
+  coord_sf(
+    crs = sf::st_crs(3310),
+    xlim = c(-410000, 585000),
+    ylim = c(-640000, 485000),
+    expand = FALSE,
+    clip = "off"
+  ) +
+  theme_void(base_family = "sans", base_size = 12) +
+  theme(
+    plot.background = element_rect(fill = paper, color = NA),
+    panel.background = element_rect(fill = paper, color = NA),
+    legend.background = element_rect(fill = paper, color = NA),
+    legend.box.background = element_rect(fill = paper, color = NA),
+    plot.title = element_text(
+      family = "sans",
+      face = "bold",
+      size = 21,
+      color = ink,
+      hjust = 0,
+      margin = margin(b = 7)
+    ),
+    plot.subtitle = element_text(
+      family = "sans",
+      size = 12.5,
+      color = "#3d3d3d",
+      lineheight = 1.12,
+      hjust = 0,
+      margin = margin(b = 18)
+    ),
+    plot.caption = element_text(
+      family = "sans",
+      size = 8.2,
+      color = "#6a6a6a",
+      lineheight = 1.08,
+      hjust = 0,
+      margin = margin(t = 10)
+    ),
+    plot.title.position = "plot",
+    plot.caption.position = "plot",
+    plot.margin = margin(4, 24, 12, 18),
+    legend.position = c(0.895, 0.405),
+    legend.justification = c(0, 0.5),
+    legend.box = "vertical",
+    legend.spacing.y = unit(8, "pt"),
+    legend.title = element_text(
+      family = "sans",
+      face = "bold",
+      size = 9.6,
+      color = ink,
+      lineheight = 1.02
+    ),
+    legend.text = element_text(
+      family = "sans",
+      size = 8.6,
+      color = soft_ink
+    )
+  )
+
+scatter_labels <- c(
+  "Ventura",
+  "Sonoma",
+  "Los Angeles",
+  "Lake",
+  "Butte",
+  "Inyo",
+  "Nevada",
+  "Plumas"
+)
+
+inset_data <- county_plot_data |>
+  mutate(
+    label = if_else(NAME %in% scatter_labels, NAME, NA_character_),
+    x_label = case_when(
+      NAME == "Inyo" ~ 13000,
+      NAME == "Nevada" ~ 35000,
+      NAME == "Plumas" ~ 9000,
+      NAME == "Lake" ~ 155000,
+      NAME == "Butte" ~ 520000,
+      NAME == "Ventura" ~ 1300000,
+      NAME == "Sonoma" ~ 900000,
+      NAME == "Los Angeles" ~ 780000,
+      TRUE ~ wildfire_student_days
+    ),
+    y_label = case_when(
+      NAME == "Inyo" ~ pooled_chronic_absenteeism_rate + 0.015,
+      NAME == "Nevada" ~ pooled_chronic_absenteeism_rate + 0.024,
+      NAME == "Plumas" ~ pooled_chronic_absenteeism_rate - 0.018,
+      NAME == "Lake" ~ pooled_chronic_absenteeism_rate + 0.012,
+      NAME == "Butte" ~ pooled_chronic_absenteeism_rate + 0.010,
+      NAME == "Ventura" ~ pooled_chronic_absenteeism_rate - 0.012,
+      NAME == "Sonoma" ~ pooled_chronic_absenteeism_rate + 0.014,
+      NAME == "Los Angeles" ~ pooled_chronic_absenteeism_rate - 0.014,
+      TRUE ~ pooled_chronic_absenteeism_rate
+    )
+  )
+
+inset_plot <- ggplot(
+  inset_data,
+  aes(x = wildfire_student_days, y = pooled_chronic_absenteeism_rate)
+) +
+  annotate(
+    "rect",
+    xmin = county_fire_cutoff,
+    xmax = Inf,
+    ymin = county_absenteeism_median,
+    ymax = Inf,
+    fill = fire_orange,
+    alpha = 0.08
+  ) +
+  geom_vline(
+    xintercept = county_fire_cutoff,
+    color = "#9a9a9a",
+    linewidth = 0.35,
+    linetype = "dashed"
+  ) +
+  geom_hline(
+    yintercept = county_absenteeism_median,
+    color = "#9a9a9a",
+    linewidth = 0.35,
+    linetype = "dashed"
+  ) +
+  geom_point(
+    aes(
+      fill = overlap_group,
+      size = chronic_absenteeism_eligible_enrollment
+    ),
+    shape = 21,
+    color = "#ffffff",
+    stroke = 0.35,
+    alpha = 0.9
+  ) +
+  geom_segment(
+    data = inset_data |> filter(!is.na(label)),
+    aes(x = x_label, y = y_label, xend = wildfire_student_days, yend = pooled_chronic_absenteeism_rate),
+    linewidth = 0.2,
+    color = "#777777"
+  ) +
+  geom_text(
+    data = inset_data |> filter(!is.na(label)),
+    aes(x = x_label, y = y_label, label = label),
+    family = "sans",
+    fontface = "bold",
+    size = 2.35,
+    color = ink,
+    lineheight = 0.95
+  ) +
+  annotate(
+    "text",
+    x = county_fire_cutoff * 1.28,
+    y = 0.45,
+    hjust = 0,
+    family = "sans",
+    fontface = "bold",
+    size = 2.55,
+    color = fire_orange,
+    label = "High fire +\nhigher absenteeism"
+  ) +
+  scale_x_continuous(
+    trans = pseudo_log_trans(base = 10),
+    breaks = c(0, 10000, 100000, 1000000),
+    labels = label_short_count,
+    expand = expansion(mult = c(0.03, 0.16))
+  ) +
+  scale_y_continuous(
+    labels = label_percent(accuracy = 1),
+    limits = c(0.04, 0.515),
+    expand = expansion(mult = c(0.02, 0.03))
+  ) +
+  scale_fill_manual(
+    values = c(
+      "High wildfire, high absenteeism" = "#8f3b25",
+      "High wildfire, lower absenteeism" = "#d17a45",
+      "Lower wildfire, high absenteeism" = "#326f77",
+      "Lower wildfire, lower absenteeism" = "#b8b8b8"
+    ),
+    guide = "none"
+  ) +
+  scale_size_area(max_size = 5.5, guide = "none") +
+  labs(
+    title = "The overlap is partial",
+    x = "Wildfire missed student-days",
+    y = "Chronic absenteeism rate"
+  ) +
+  theme_minimal(base_family = "sans", base_size = 8.8) +
+  theme(
+    plot.background = element_rect(fill = "#fffefd", color = "#d8d2c5", linewidth = 0.45),
+    panel.background = element_rect(fill = "#fffefd", color = NA),
+    plot.title = element_text(
+      family = "sans",
+      face = "bold",
+      size = 10.2,
+      color = ink,
+      hjust = 0,
+      margin = margin(b = 4)
+    ),
+    axis.title = element_text(
+      family = "sans",
+      face = "bold",
+      size = 7.6,
+      color = soft_ink
+    ),
+    axis.text = element_text(
+      family = "sans",
+      size = 7.2,
+      color = soft_ink
+    ),
+    panel.grid.major = element_line(color = "#e5dfd4", linewidth = 0.28),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(8, 10, 8, 10)
+  )
+
+relationship_plot <- ggplot(
+  inset_data,
+  aes(x = wildfire_student_days, y = pooled_chronic_absenteeism_rate)
+) +
+  annotate(
+    "rect",
+    xmin = county_fire_cutoff,
+    xmax = Inf,
+    ymin = county_absenteeism_median,
+    ymax = Inf,
+    fill = fire_orange,
+    alpha = 0.08
+  ) +
+  geom_vline(
+    xintercept = county_fire_cutoff,
+    color = "#8b8b8b",
+    linewidth = 0.45,
+    linetype = "dashed"
+  ) +
+  geom_hline(
+    yintercept = county_absenteeism_median,
+    color = "#8b8b8b",
+    linewidth = 0.45,
+    linetype = "dashed"
+  ) +
+  geom_point(
+    aes(fill = overlap_group),
+    shape = 21,
+    size = 4.4,
+    color = "#ffffff",
+    stroke = 0.55,
+    alpha = 0.92
+  ) +
+  geom_segment(
+    data = inset_data |> filter(!is.na(label)),
+    aes(
+      x = x_label,
+      y = y_label,
+      xend = wildfire_student_days,
+      yend = pooled_chronic_absenteeism_rate
+    ),
+    linewidth = 0.28,
+    color = "#777777"
+  ) +
+  geom_text(
+    data = inset_data |> filter(!is.na(label)),
+    aes(x = x_label, y = y_label, label = label),
+    family = "sans",
+    fontface = "bold",
+    size = 3.25,
+    color = ink,
+    lineheight = 0.95
+  ) +
+  annotate(
+    "text",
+    x = county_fire_cutoff * 1.35,
+    y = 0.455,
+    hjust = 0,
+    family = "sans",
+    fontface = "bold",
+    size = 3.8,
+    color = fire_orange,
+    label = "High wildfire burden\nand above-median absenteeism"
+  ) +
+  annotate(
+    "text",
+    x = 0,
+    y = county_absenteeism_median + 0.009,
+    hjust = 0,
+    family = "sans",
+    size = 3.1,
+    color = "#777777",
+    label = "Median county absenteeism"
+  ) +
+  annotate(
+    "text",
+    x = county_fire_cutoff * 1.08,
+    y = 0.052,
+    angle = 90,
+    hjust = 0,
+    family = "sans",
+    size = 3.1,
+    color = "#777777",
+    label = "Top wildfire-burden cutoff"
+  ) +
+  scale_x_continuous(
+    trans = pseudo_log_trans(base = 10),
+    breaks = c(0, 10000, 100000, 1000000),
+    labels = label_short_count,
+    expand = expansion(mult = c(0.04, 0.18))
+  ) +
+  scale_y_continuous(
+    labels = label_percent(accuracy = 1),
+    limits = c(0.04, 0.515),
+    expand = expansion(mult = c(0.02, 0.03))
+  ) +
+  scale_fill_manual(
+    values = c(
+      "High wildfire, high absenteeism" = "#8f3b25",
+      "High wildfire, lower absenteeism" = "#d17a45",
+      "Lower wildfire, high absenteeism" = "#326f77",
+      "Lower wildfire, lower absenteeism" = "#b8b8b8"
+    ),
+    labels = c(
+      "High wildfire, high absenteeism" = "High wildfire + high absenteeism",
+      "High wildfire, lower absenteeism" = "High wildfire + lower absenteeism",
+      "Lower wildfire, high absenteeism" = "Lower wildfire + high absenteeism",
+      "Lower wildfire, lower absenteeism" = "Lower wildfire + lower absenteeism"
+    ),
+    name = NULL
+  ) +
+  labs(
+    x = "Wildfire missed student-days, 2017-18 and 2018-19",
+    y = "Pooled chronic absenteeism rate"
+  ) +
+  theme_minimal(base_family = "sans", base_size = 12) +
+  theme(
+    plot.background = element_rect(fill = paper, color = NA),
+    panel.background = element_rect(fill = paper, color = NA),
+    panel.grid.major = element_line(color = "#e0d9ce", linewidth = 0.36),
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(
+      family = "sans",
+      face = "bold",
+      size = 11,
+      color = soft_ink
+    ),
+    axis.text = element_text(
+      family = "sans",
+      size = 10.5,
+      color = soft_ink
+    ),
+    legend.position = "bottom",
+    legend.justification = "left",
+    legend.text = element_text(
+      family = "sans",
+      size = 10,
+      color = soft_ink
+    ),
+    legend.key = element_rect(fill = paper, color = NA),
+    plot.margin = margin(4, 22, 10, 18)
+  )
+```
+
+```{r county-map-visualization, fig.width=13, fig.height=8, fig.alt="California county map showing chronic absenteeism by county color and wildfire missed student-days by proportional orange circles."}
+grid.newpage()
+grid.rect(gp = gpar(fill = paper, col = NA))
+print(base_map, vp = viewport(x = 0.5, y = 0.455, width = 1, height = 0.76))
+grid.text(
+  map_title_text,
+  x = 0.055,
+  y = 0.965,
+  just = c("left", "top"),
+  gp = gpar(fontfamily = "sans", fontface = "bold", fontsize = 24, col = ink)
+)
+grid.text(
+  map_subtitle_text,
+  x = 0.055,
+  y = 0.905,
+  just = c("left", "top"),
+  gp = gpar(fontfamily = "sans", fontsize = 13, col = "#3d3d3d", lineheight = 1.08)
+)
+grid.text(
+  shared_caption_text,
+  x = 0.055,
+  y = 0.045,
+  just = c("left", "bottom"),
+  gp = gpar(fontfamily = "sans", fontsize = 8.5, col = "#6a6a6a", lineheight = 1.08)
+)
+```
+
+```{r relationship-visualization, fig.width=13, fig.height=8, fig.alt="Scatterplot comparing county wildfire missed student-days with pooled chronic absenteeism rates, showing that high wildfire-burden counties are not always the highest chronic absenteeism counties."}
+grid.newpage()
+grid.rect(gp = gpar(fill = paper, col = NA))
+print(relationship_plot, vp = viewport(x = 0.5, y = 0.455, width = 0.91, height = 0.70))
+grid.text(
+  relationship_title_text,
+  x = 0.055,
+  y = 0.965,
+  just = c("left", "top"),
+  gp = gpar(fontfamily = "sans", fontface = "bold", fontsize = 22, col = ink)
+)
+grid.text(
+  relationship_subtitle_text,
+  x = 0.055,
+  y = 0.895,
+  just = c("left", "top"),
+  gp = gpar(fontfamily = "sans", fontsize = 13, col = "#3d3d3d", lineheight = 1.08)
+)
+grid.text(
+  shared_caption_text,
+  x = 0.055,
+  y = 0.045,
+  just = c("left", "bottom"),
+  gp = gpar(fontfamily = "sans", fontsize = 8.5, col = "#6a6a6a", lineheight = 1.08)
+)
+```

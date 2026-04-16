@@ -186,8 +186,8 @@ total_closure_plot <- ggplot(
     panel.grid.major.x = element_blank(),
     panel.grid.minor = element_blank(),
     panel.grid.major.y = element_line(color = "#DED9D1", linewidth = 0.35),
-    panel.background = element_rect(fill = "#F8F5EF", color = NA),
-    plot.background = element_rect(fill = "#F8F5EF", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
     plot.title = element_text(
       family = "Georgia",
       face = "bold",
@@ -224,5 +224,15 @@ total_closure_plot
 
 ```{r}
 write_csv(statewide_by_year, "statewide_by_year.csv")
+```
+```{r}
+ggsave(
+  filename = "total_closure_plot.png",
+  plot = total_closure_plot,
+  width = 14,
+  height = 7.2,
+  units = "in",
+  dpi = 300
+)
 ```
 
