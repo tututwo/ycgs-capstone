@@ -3,8 +3,9 @@
 ## GitHub Repository Submission
 
 - Repository has a clear folder structure: `analysis/`, `data/`, `docs/`, `reports/`, `scripts/`, `communication/`, and `archive/`.
-- Main analysis artifact is easy to find at `analysis/initial_EDA.qmd`.
-- Rendered report is easy to find at `reports/initial_EDA.pdf`.
+- Main analysis artifact is easy to find at `analysis/wildfire_absenteeism_analysis.qmd`.
+- Rendered report is easy to find at `reports/wildfire_absenteeism_analysis.pdf`.
+- Final figures and generated tables are separated from source notebooks under `reports/figures/` and `reports/tables/`.
 - Repository history should show multiple meaningful commits after this cleanup.
 
 ## Datasets Included
@@ -15,7 +16,7 @@
 
 ## Project Notebook
 
-- `analysis/initial_EDA.qmd` contains the full Quarto/R workflow.
+- `analysis/wildfire_absenteeism_analysis.qmd` contains the full Quarto/R workflow.
 - The notebook documents loading, cleaning, exploratory analysis, joins, visualizations, sensitivity checks, and limitations.
 - Relative paths were updated for the reorganized repository.
 
@@ -27,6 +28,7 @@
 ## Project Clarity And Reproducibility
 
 - `docs/workflow.md` gives step-by-step reproduction instructions.
+- `docs/ethics.md` documents privacy, governance, and bias considerations.
 - `environment.yml` defines the R/Quarto environment.
 - `scripts/check_environment.R` checks local prerequisites.
 - `scripts/render_report.R` renders the report.

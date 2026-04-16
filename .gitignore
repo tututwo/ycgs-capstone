@@ -10,6 +10,7 @@
 *_files/
 reports/*.html
 reports/*_files/
+reports/analysis/
 data/raw/cde_attendance/*.txt
 !data/raw/cde_attendance/head_absenteeism_data.csv
 

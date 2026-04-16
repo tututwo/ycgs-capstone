@@ -1,0 +1,86 @@
+year,cause,closure_days,cause_label,cause_code,year_primary_total,share,year_index,segment_label,label_color
+2003,days_wildfire,7,Wildfire,WF,939,0.007454739084132056,1,NA,white
+2003,days_natural_disasters_weather,530,Natural disasters/weather,WX,939,0.564430244941427,1,WX,white
+2003,days_infrastructure,395,Infrastructure,IN,939,0.4206602768903088,1,IN,#2A2A2A
+2003,days_student_safety,5,Student safety,SS,939,0.005324813631522897,1,NA,white
+2003,days_other,2,Other,OT,939,0.002129925452609159,1,NA,#2A2A2A
+2004,days_wildfire,4448,Wildfire,WF,4648,0.9569707401032702,2,WF,white
+2004,days_natural_disasters_weather,106,Natural disasters/weather,WX,4648,0.02280550774526678,2,NA,white
+2004,days_infrastructure,74,Infrastructure,IN,4648,0.015920826161790018,2,NA,#2A2A2A
+2004,days_student_safety,20,Student safety,SS,4648,0.004302925989672977,2,NA,white
+2004,days_other,0,Other,OT,4648,0,2,NA,#2A2A2A
+2005,days_wildfire,20,Wildfire,WF,642,0.03115264797507788,3,NA,white
+2005,days_natural_disasters_weather,553,Natural disasters/weather,WX,642,0.8613707165109035,3,WX,white
+2005,days_infrastructure,57,Infrastructure,IN,642,0.08878504672897196,3,IN,#2A2A2A
+2005,days_student_safety,12,Student safety,SS,642,0.018691588785046728,3,NA,white
+2005,days_other,0,Other,OT,642,0,3,NA,#2A2A2A
+2006,days_wildfire,62,Wildfire,WF,730,0.08493150684931507,4,WF,white
+2006,days_natural_disasters_weather,495,Natural disasters/weather,WX,730,0.678082191780822,4,WX,white
+2006,days_infrastructure,97,Infrastructure,IN,730,0.13287671232876713,4,IN,#2A2A2A
+2006,days_student_safety,2,Student safety,SS,730,0.0027397260273972603,4,NA,white
+2006,days_other,74,Other,OT,730,0.10136986301369863,4,OT,#2A2A2A
+2007,days_wildfire,38,Wildfire,WF,541,0.07024029574861368,5,NA,white
+2007,days_natural_disasters_weather,272,Natural disasters/weather,WX,541,0.5027726432532348,5,WX,white
+2007,days_infrastructure,105,Infrastructure,IN,541,0.19408502772643252,5,IN,#2A2A2A
+2007,days_student_safety,112,Student safety,SS,541,0.20702402957486138,5,SS,white
+2007,days_other,14,Other,OT,541,0.025878003696857672,5,NA,#2A2A2A
+2008,days_wildfire,5354,Wildfire,WF,5974,0.8962169400736525,6,WF,white
+2008,days_natural_disasters_weather,473,Natural disasters/weather,WX,5974,0.07917643120187479,6,NA,white
+2008,days_infrastructure,115,Infrastructure,IN,5974,0.01925008369601607,6,NA,#2A2A2A
+2008,days_student_safety,6,Student safety,SS,5974,0.001004352192835621,6,NA,white
+2008,days_other,26,Other,OT,5974,0.004352192835621024,6,NA,#2A2A2A
+2009,days_wildfire,240,Wildfire,WF,970,0.24742268041237114,7,WF,white
+2009,days_natural_disasters_weather,582,Natural disasters/weather,WX,970,0.6,7,WX,white
+2009,days_infrastructure,51,Infrastructure,IN,970,0.05257731958762887,7,NA,#2A2A2A
+2009,days_student_safety,92,Student safety,SS,970,0.09484536082474226,7,SS,white
+2009,days_other,5,Other,OT,970,0.005154639175257732,7,NA,#2A2A2A
+2010,days_wildfire,161,Wildfire,WF,1052,0.15304182509505704,8,WF,white
+2010,days_natural_disasters_weather,809,Natural disasters/weather,WX,1052,0.7690114068441065,8,WX,white
+2010,days_infrastructure,69,Infrastructure,IN,1052,0.0655893536121673,8,NA,#2A2A2A
+2010,days_student_safety,12,Student safety,SS,1052,0.011406844106463879,8,NA,white
+2010,days_other,1,Other,OT,1052,9.505703422053232e-4,8,NA,#2A2A2A
+2011,days_wildfire,0,Wildfire,WF,414,0,9,NA,white
+2011,days_natural_disasters_weather,321,Natural disasters/weather,WX,414,0.7753623188405797,9,WX,white
+2011,days_infrastructure,85,Infrastructure,IN,414,0.20531400966183574,9,IN,#2A2A2A
+2011,days_student_safety,4,Student safety,SS,414,0.00966183574879227,9,NA,white
+2011,days_other,4,Other,OT,414,0.00966183574879227,9,NA,#2A2A2A
+2012,days_wildfire,9,Wildfire,WF,916,0.009825327510917031,10,NA,white
+2012,days_natural_disasters_weather,325,Natural disasters/weather,WX,916,0.3548034934497817,10,WX,white
+2012,days_infrastructure,530,Infrastructure,IN,916,0.5786026200873362,10,IN,#2A2A2A
+2012,days_student_safety,51,Student safety,SS,916,0.055676855895196505,10,NA,white
+2012,days_other,1,Other,OT,916,0.001091703056768559,10,NA,#2A2A2A
+2013,days_wildfire,28,Wildfire,WF,195,0.14358974358974358,11,WF,white
+2013,days_natural_disasters_weather,95,Natural disasters/weather,WX,195,0.48717948717948717,11,WX,white
+2013,days_infrastructure,34,Infrastructure,IN,195,0.17435897435897435,11,IN,#2A2A2A
+2013,days_student_safety,38,Student safety,SS,195,0.19487179487179487,11,SS,white
+2013,days_other,0,Other,OT,195,0,11,NA,#2A2A2A
+2014,days_wildfire,297,Wildfire,WF,434,0.684331797235023,12,WF,white
+2014,days_natural_disasters_weather,75,Natural disasters/weather,WX,434,0.1728110599078341,12,WX,white
+2014,days_infrastructure,55,Infrastructure,IN,434,0.12672811059907835,12,IN,#2A2A2A
+2014,days_student_safety,5,Student safety,SS,434,0.01152073732718894,12,NA,white
+2014,days_other,2,Other,OT,434,0.004608294930875576,12,NA,#2A2A2A
+2015,days_wildfire,65,Wildfire,WF,1049,0.06196377502383222,13,NA,white
+2015,days_natural_disasters_weather,848,Natural disasters/weather,WX,1049,0.8083889418493804,13,WX,white
+2015,days_infrastructure,70,Infrastructure,IN,1049,0.0667302192564347,13,NA,#2A2A2A
+2015,days_student_safety,43,Student safety,SS,1049,0.04099142040038131,13,NA,white
+2015,days_other,23,Other,OT,1049,0.0219256434699714,13,NA,#2A2A2A
+2016,days_wildfire,509,Wildfire,WF,1808,0.2815265486725664,14,WF,white
+2016,days_natural_disasters_weather,94,Natural disasters/weather,WX,1808,0.051991150442477874,14,NA,white
+2016,days_infrastructure,122,Infrastructure,IN,1808,0.06747787610619468,14,NA,#2A2A2A
+2016,days_student_safety,1077,Student safety,SS,1808,0.5956858407079646,14,SS,white
+2016,days_other,6,Other,OT,1808,0.00331858407079646,14,NA,#2A2A2A
+2017,days_wildfire,451,Wildfire,WF,2194,0.20556061987237922,15,WF,white
+2017,days_natural_disasters_weather,1559,Natural disasters/weather,WX,2194,0.7105742935278031,15,WX,white
+2017,days_infrastructure,119,Infrastructure,IN,2194,0.05423883318140383,15,NA,#2A2A2A
+2017,days_student_safety,58,Student safety,SS,2194,0.02643573381950775,15,NA,white
+2017,days_other,7,Other,OT,2194,0.0031905195989061076,15,NA,#2A2A2A
+2018,days_wildfire,5860,Wildfire,WF,6415,0.9134840218238504,16,WF,white
+2018,days_natural_disasters_weather,331,Natural disasters/weather,WX,6415,0.05159781761496492,16,NA,white
+2018,days_infrastructure,80,Infrastructure,IN,6415,0.012470771628994544,16,NA,#2A2A2A
+2018,days_student_safety,108,Student safety,SS,6415,0.016835541699142635,16,NA,white
+2018,days_other,36,Other,OT,6415,0.0056118472330475445,16,NA,#2A2A2A
+2019,days_wildfire,3893,Wildfire,WF,4898,0.7948142098815844,17,WF,white
+2019,days_natural_disasters_weather,865,Natural disasters/weather,WX,4898,0.17660269497754186,17,WX,white
+2019,days_infrastructure,113,Infrastructure,IN,4898,0.023070641077991016,17,NA,#2A2A2A
+2019,days_student_safety,15,Student safety,SS,4898,0.0030624744793793387,17,NA,white
+2019,days_other,12,Other,OT,4898,0.002449979583503471,17,NA,#2A2A2A

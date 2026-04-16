@@ -4,6 +4,6 @@ This folder preserves prior feedback, scratch files, and LLM-assisted notes that
 
 Use the main workflow instead:
 
-- `analysis/initial_EDA.qmd`
-- `reports/initial_EDA.pdf`
+- `analysis/wildfire_absenteeism_analysis.qmd`
+- `reports/wildfire_absenteeism_analysis.pdf`
 - `docs/workflow.md`

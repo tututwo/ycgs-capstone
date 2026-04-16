@@ -12,12 +12,14 @@ The analysis treats wildfire missed student-days as the main burden metric: wild
 
 | Path | Purpose |
 | --- | --- |
-| `analysis/initial_EDA.qmd` | Primary Quarto/R workflow for loading, cleaning, analyzing, and visualizing the data. |
-| `reports/initial_EDA.pdf` | Rendered report submitted as the current analysis artifact. |
+| `analysis/wildfire_absenteeism_analysis.qmd` | Primary Quarto/R workflow for loading, cleaning, analyzing, and visualizing the data. |
+| `reports/wildfire_absenteeism_analysis.pdf` | Rendered report submitted as the current analysis artifact. |
+| `reports/figures/` | Final figures used in the report and plain-language summary. |
+| `reports/tables/` | Generated summary tables from supporting visualization notebooks. |
 | `data/raw/school_fire/` | Included school closure, enrollment, demographic, and test-score dataset plus codebook. |
 | `data/raw/cde_attendance/` | Location for downloaded CDE attendance files; a small sample head file is tracked for structure reference. |
 | `data/metadata/` | Data dictionaries and source notes for the CDE attendance files. |
-| `docs/` | Provenance, workflow, limitations, and rubric-alignment documentation. |
+| `docs/` | Provenance, workflow, ethics, limitations, and rubric-alignment documentation. |
 | `scripts/` | Utility scripts for downloading public CDE files, checking the R/Quarto environment, and rendering the report. |
 | `communication/` | Plain-language final summary for a non-technical audience. |
 | `archive/` | Prior feedback, LLM notes, and scratch work not required for the main reproducible workflow. |

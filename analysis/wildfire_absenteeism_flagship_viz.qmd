@@ -351,15 +351,13 @@ county_plot_data <- county_points |>
 
 label_positions <- tribble(
   ~NAME, ~label_x, ~label_y, ~label_note,
-  "Ventura", -125000, -360000, "Ventura",
-  "Sonoma", -355000, 85000, "Sonoma",
-  "Los Angeles", 35000, -455000, "Los Angeles",
+  "Ventura", -90000, -360000, "Ventura",
+  "Sonoma", -350000, 72000, "Sonoma",
+  "Los Angeles", 45000, -445000, "Los Angeles",
   "Butte", -230000, 220000, "Butte",
   "Lake", -347000, 145000, "Lake",
   "Napa", -304000, 27000, "Napa",
   "Inyo", 330000, -98000, "Inyo",
-  "Nevada", -154000, 153000, "Nevada",
-  "Plumas", -25000, 266000, "Plumas",
   "San Francisco", -354000, -47000, "San Francisco"
 )
 
@@ -369,24 +367,24 @@ label_data <- county_plot_data |>
 
 ```{r build-plot-objects}
 map_fill_colors <- c(
-  "#f5f1e6",
-  "#d5d8be",
-  "#9ab6aa",
-  "#4f8f91",
-  "#1f555b"
+  "#f7f7f3",
+  "#dfe8df",
+  "#b5ccc4",
+  "#6f9c9e",
+  "#2e686f"
 )
 
 fire_orange <- "#b64a2f"
 ink <- "#1f1f1f"
 soft_ink <- "#555555"
-paper <- "#fbfaf7"
+paper <- "#ffffff"
 county_line <- "#ffffff"
 
-map_title_text <- "Wildfire disruption was concentrated in a few California counties"
+map_title_text <- "Wildfire school disruption clustered in a handful of California counties"
 map_subtitle_text <- str_wrap(
   str_c(
-    "County color shows pooled chronic absenteeism. Circle area shows wildfire missed student-days, ",
-    "with orange rings marking the top quarter of wildfire-affected counties."
+    "Circle area shows wildfire missed student-days in 2017-18 and 2018-19. ",
+    "County shading shows chronic absenteeism, which does not always peak in the same places."
   ),
   width = 118
 )
@@ -456,30 +454,13 @@ base_map <- ggplot() +
   scale_fill_gradientn(
     colors = map_fill_colors,
     labels = label_percent(accuracy = 1),
-    name = "Chronic\nabsenteeism",
-    guide = guide_colorbar(
-      title.position = "top",
-      title.hjust = 0,
-      barheight = unit(65, "pt"),
-      barwidth = unit(8, "pt")
-    )
+    guide = "none"
   ) +
   scale_size_area(
     max_size = 24,
     breaks = legend_breaks_fire,
     labels = label_short_count,
-    name = "Wildfire missed\nstudent-days",
-    guide = guide_legend(
-      title.position = "top",
-      title.hjust = 0,
-      override.aes = list(
-        shape = 21,
-        fill = "#ffffff",
-        color = fire_orange,
-        alpha = 0.75,
-        stroke = 0.7
-      )
-    )
+    guide = "none"
   ) +
   coord_sf(
     crs = sf::st_crs(3310),
@@ -521,23 +502,96 @@ base_map <- ggplot() +
     plot.title.position = "plot",
     plot.caption.position = "plot",
     plot.margin = margin(4, 24, 12, 18),
-    legend.position = c(0.895, 0.405),
-    legend.justification = c(0, 0.5),
-    legend.box = "vertical",
-    legend.spacing.y = unit(8, "pt"),
-    legend.title = element_text(
-      family = "sans",
-      face = "bold",
-      size = 9.6,
-      color = ink,
-      lineheight = 1.02
-    ),
-    legend.text = element_text(
-      family = "sans",
-      size = 8.6,
-      color = soft_ink
-    )
+    legend.position = "none"
   )
+
+draw_map_legend <- function() {
+  chronic_color <- scales::col_numeric(
+    palette = map_fill_colors,
+    domain = range(county_plot_data$pooled_chronic_absenteeism_rate, na.rm = TRUE)
+  )
+
+  rail_x <- 0.755
+
+  grid.text(
+    "How to read this",
+    x = rail_x,
+    y = 0.805,
+    just = c("left", "top"),
+    gp = gpar(fontfamily = "sans", fontface = "bold", fontsize = 12.5, col = ink)
+  )
+  grid.text(
+    str_wrap(
+      "Large orange circles mark counties where wildfire closures affected the most students. Darker county shading marks higher chronic absenteeism.",
+      width = 33
+    ),
+    x = rail_x,
+    y = 0.765,
+    just = c("left", "top"),
+    gp = gpar(fontfamily = "sans", fontsize = 9.5, col = soft_ink, lineheight = 1.08)
+  )
+
+  grid.text(
+    "Wildfire missed\nstudent-days",
+    x = rail_x,
+    y = 0.635,
+    just = c("left", "top"),
+    gp = gpar(fontfamily = "sans", fontface = "bold", fontsize = 11.5, col = ink, lineheight = 1)
+  )
+
+  bubble_values <- c(100000, 250000, 500000, 1000000)
+  bubble_radii <- sqrt(bubble_values / max(bubble_values)) * 0.047
+  bubble_x <- rail_x + 0.045
+  bubble_ys <- c(0.555, 0.485, 0.405, 0.305)
+
+  walk2(bubble_values, seq_along(bubble_values), function(value, idx) {
+    grid.circle(
+      x = bubble_x,
+      y = bubble_ys[idx],
+      r = bubble_radii[idx],
+      gp = gpar(fill = NA, col = fire_orange, lwd = 1.15)
+    )
+    grid.text(
+      label_short_count(value),
+      x = rail_x + 0.115,
+      y = bubble_ys[idx],
+      just = c("left", "center"),
+      gp = gpar(fontfamily = "sans", fontsize = 9.5, col = soft_ink)
+    )
+  })
+
+  grid.text(
+    "Chronic\nabsenteeism",
+    x = rail_x,
+    y = 0.205,
+    just = c("left", "top"),
+    gp = gpar(fontfamily = "sans", fontface = "bold", fontsize = 11.5, col = ink, lineheight = 1)
+  )
+
+  absenteeism_values <- c(0.40, 0.30, 0.20, 0.10)
+  swatch_x <- rail_x
+  swatch_y_top <- 0.135
+  swatch_h <- 0.022
+
+  walk2(absenteeism_values, seq_along(absenteeism_values), function(value, idx) {
+    y <- swatch_y_top - (idx - 1) * swatch_h
+    grid.rect(
+      x = swatch_x,
+      y = y,
+      width = 0.026,
+      height = swatch_h,
+      just = c("left", "top"),
+      gp = gpar(fill = chronic_color(value), col = "#ffffff", lwd = 0.6)
+    )
+    grid.text(
+      label_percent(accuracy = 1)(value),
+      x = swatch_x + 0.034,
+      y = y - swatch_h / 2,
+      just = c("left", "center"),
+      gp = gpar(fontfamily = "sans", fontsize = 9.5, col = soft_ink)
+    )
+  })
+}
 
 scatter_labels <- c(
   "Ventura",
@@ -839,7 +893,8 @@ relationship_plot <- ggplot(
 ```{r county-map-visualization, fig.width=13, fig.height=8, fig.alt="California county map showing chronic absenteeism by county color and wildfire missed student-days by proportional orange circles."}
 grid.newpage()
 grid.rect(gp = gpar(fill = paper, col = NA))
-print(base_map, vp = viewport(x = 0.5, y = 0.455, width = 1, height = 0.76))
+print(base_map, vp = viewport(x = 0.405, y = 0.445, width = 0.68, height = 0.72))
+draw_map_legend()
 grid.text(
   map_title_text,
   x = 0.055,

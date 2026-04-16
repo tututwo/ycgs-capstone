@@ -9,7 +9,7 @@ conda env create -f environment.yml
 conda activate ycgs-capstone
 ```
 
-The workflow requires R, Quarto, and these R packages: `tidyverse`, `janitor`, `scales`, and `sf`.
+The workflow requires R, Quarto, and these R packages: `tidyverse`, `janitor`, `scales`, and `sf`. The helper scripts can use Quarto from `PATH` or the Quarto binary bundled with RStudio on macOS.
 
 ## 2. Check Project Files
 
@@ -43,12 +43,12 @@ Run:
 Rscript scripts/render_report.R
 ```
 
-Rendered output is written to `reports/` according to `_quarto.yml`.
+Rendered output is written to `reports/wildfire_absenteeism_analysis.pdf`. The top-level PDF is the canonical review artifact.
 
 ## 5. Main Output
 
 Review:
 
-- `reports/initial_EDA.pdf`
+- `reports/wildfire_absenteeism_analysis.pdf`
 - `communication/final_summary.md`
 - `docs/rubric_alignment.md`
