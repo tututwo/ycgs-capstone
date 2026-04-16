@@ -5,7 +5,7 @@ editor: visual
 ---
 
 > Archived scratch file. This exploratory loader is superseded by
-> `analysis/initial_EDA.qmd` and is not part of the reproducible capstone
+> `analysis/wildfire_absenteeism_analysis.qmd` and is not part of the reproducible capstone
 > workflow.
 
 ```{r setup}

@@ -1,0 +1,305 @@
+---
+title: "District Wildfire Missed Student-Days"
+format:
+  html:
+    fig-width: 12
+    fig-height: 7.2
+    fig-dpi: 180
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+library(scales)
+library(sf)
+
+to_number <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "NULL", "*"))
+}
+
+safe_divide <- function(num, den) {
+  if_else(!is.na(den) & den > 0, num / den, NA_real_)
+}
+
+clean_cds_code <- function(x) {
+  digits <- str_remove_all(coalesce(as.character(x), ""), "[^0-9]")
+  if_else(digits == "", NA_character_, str_pad(digits, width = 14, side = "left", pad = "0"))
+}
+
+first_non_missing <- function(x) {
+  x <- x[!is.na(x) & x != ""]
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  x[[1]]
+}
+
+short_number <- function(x) {
+  case_when(
+    is.na(x) ~ NA_character_,
+    abs(x) >= 1000000 ~ str_glue("{round(x / 1000000, 1)}M"),
+    abs(x) >= 1000 ~ str_glue("{round(x / 1000)}k"),
+    TRUE ~ label_comma(accuracy = 1)(x)
+  )
+}
+
+analysis_years <- c(2018, 2019)
+
+closure_file <- "annual_school_closures_standardized_test_scores_ca_2003_2019.csv"
+closure_path_candidates <- c(
+  file.path("..", "data", "raw", "school_fire", closure_file),
+  file.path("data", "raw", "school_fire", closure_file)
+)
+
+closure_path <- closure_path_candidates[file.exists(closure_path_candidates)][1]
+if (is.na(closure_path)) {
+  stop("Could not find the closure CSV. Check the relative path from this Quarto file.")
+}
+
+district_shape_path_candidates <- c(
+  file.path("..", "data", "raw", "DistrictAreas2425", "DistrictAreas2425.shp"),
+  file.path("data", "raw", "DistrictAreas2425", "DistrictAreas2425.shp")
+)
+
+district_shape_path <- district_shape_path_candidates[file.exists(district_shape_path_candidates)][1]
+if (is.na(district_shape_path)) {
+  stop("Could not find the district shapefile. Expected data/raw/DistrictAreas2425/DistrictAreas2425.shp.")
+}
+```
+
+```{r load-and-summarize}
+closure_data <- readr::read_csv(
+  closure_path,
+  col_types = readr::cols(.default = readr::col_character()),
+  show_col_types = FALSE
+) |>
+  clean_names()
+
+if ("days_wildfires" %in% names(closure_data) && !"days_wildfire" %in% names(closure_data)) {
+  closure_data <- closure_data |>
+    rename(days_wildfire = days_wildfires)
+}
+
+closure_window <- closure_data |>
+  mutate(
+    year = as.integer(year),
+    county = str_squish(str_to_title(county)),
+    district_name = str_squish(district_name),
+    cds_code = clean_cds_code(cds_code),
+    cd_code = str_sub(cds_code, 1, 7),
+    across(any_of(c("days_wildfire", "days_total", "total_enrollment")), to_number),
+    days_wildfire = replace_na(days_wildfire, 0),
+    days_total = replace_na(days_total, 0),
+    total_enrollment = replace_na(total_enrollment, 0),
+    wildfire_student_days = days_wildfire * total_enrollment
+  ) |>
+  filter(year %in% analysis_years)
+
+district_window_burden <- closure_window |>
+  filter(!is.na(cd_code)) |>
+  group_by(cd_code) |>
+  summarise(
+    county = first_non_missing(county),
+    district_name = first_non_missing(district_name),
+    school_year_rows = n(),
+    schools = n_distinct(cds_code),
+    wildfire_affected_schools = n_distinct(cds_code[days_wildfire > 0]),
+    total_enrollment_school_years = sum(total_enrollment, na.rm = TRUE),
+    wildfire_days = sum(days_wildfire, na.rm = TRUE),
+    total_closure_days = sum(days_total, na.rm = TRUE),
+    wildfire_student_days = sum(wildfire_student_days, na.rm = TRUE),
+    missed_student_days_per_1000_student_years = 1000 *
+      safe_divide(wildfire_student_days, total_enrollment_school_years),
+    .groups = "drop"
+  )
+
+district_shapes <- sf::st_read(district_shape_path, quiet = TRUE) |>
+  sf::st_make_valid() |>
+  mutate(
+    cd_code = str_pad(as.character(CDCode), width = 7, side = "left", pad = "0"),
+    district_shape_name = DistrictNa,
+    county_shape = CountyName,
+    district_type = factor(DistrictTy, levels = c("Elementary", "High", "Unified"))
+  ) |>
+  select(
+    cd_code,
+    district_shape_name,
+    county_shape,
+    district_type,
+    geometry
+  ) |>
+  sf::st_transform(3310)
+
+district_map_data <- district_shapes |>
+  left_join(district_window_burden, by = "cd_code") |>
+  mutate(
+    has_closure_record = !is.na(school_year_rows),
+    district_label = coalesce(district_name, district_shape_name),
+    wildfire_student_days_map = if_else(
+      has_closure_record,
+      replace_na(wildfire_student_days, 0),
+      NA_real_
+    ),
+    burden_bin = case_when(
+      is.na(wildfire_student_days_map) ~ NA_character_,
+      wildfire_student_days_map == 0 ~ "No recorded wildfire missed days",
+      wildfire_student_days_map <= 25000 ~ "1-25k",
+      wildfire_student_days_map <= 100000 ~ "25k-100k",
+      wildfire_student_days_map <= 250000 ~ "100k-250k",
+      TRUE ~ "More than 250k"
+    ),
+    burden_bin = factor(
+      burden_bin,
+      levels = c(
+        "No recorded wildfire missed days",
+        "1-25k",
+        "25k-100k",
+        "100k-250k",
+        "More than 250k"
+      )
+    )
+  ) |>
+  filter(district_type %in% c("Elementary", "High", "Unified"))
+
+county_outline <- district_shapes |>
+  filter(district_type %in% c("Elementary", "High", "Unified")) |>
+  group_by(county_shape) |>
+  summarise(geometry = sf::st_union(geometry), .groups = "drop")
+
+label_points <- suppressWarnings(
+  district_map_data |>
+    filter(wildfire_student_days_map > 0) |>
+    group_by(district_type) |>
+    slice_max(wildfire_student_days_map, n = 1, with_ties = FALSE) |>
+    ungroup() |>
+    mutate(
+      label_name = str_remove_all(
+        district_label,
+        regex("\\s+(Unified|Elementary|High)$", ignore_case = TRUE)
+      ),
+      label = str_glue(
+        "{str_wrap(label_name, width = 14)}\n{short_number(wildfire_student_days_map)} missed days"
+      )
+    ) |>
+    sf::st_point_on_surface()
+)
+```
+
+```{r district-wildfire-map-editorial}
+#| fig-width: 12
+#| fig-height: 7.2
+district_burden_palette <- c(
+  "No recorded wildfire missed days" = "#DEDAD0",
+  "1-25k" = "#F0C989",
+  "25k-100k" = "#E28A5B",
+  "100k-250k" = "#BD4A36",
+  "More than 250k" = "#6F1D14"
+)
+
+district_wildfire_map <- ggplot() +
+  geom_sf(
+    data = district_map_data,
+    aes(fill = burden_bin),
+    color = "#F8F5EF",
+    linewidth = 0.025
+  ) +
+  geom_sf(
+    data = county_outline,
+    fill = NA,
+    color = alpha("#5D5850", 0.45),
+    linewidth = 0.12
+  ) +
+  geom_sf_label(
+    data = label_points,
+    aes(label = label),
+    inherit.aes = FALSE,
+    family = "sans",
+    fontface = "bold",
+    size = 2.65,
+    lineheight = 0.92,
+    color = "#272521",
+    fill = alpha("#F8F5EF", 0.9),
+    linewidth = 0,
+    label.padding = grid::unit(2.5, "pt"),
+    label.r = grid::unit(0, "pt")
+  ) +
+  facet_wrap(vars(district_type), nrow = 1) +
+  scale_fill_manual(
+    values = district_burden_palette,
+    na.value = "#F1EEE7",
+    na.translate = FALSE,
+    drop = FALSE,
+    name = "Wildfire missed student-days"
+  ) +
+  guides(
+    fill = guide_legend(
+      nrow = 1,
+      byrow = TRUE,
+      keywidth = grid::unit(20, "pt"),
+      keyheight = grid::unit(6, "pt"),
+      title.position = "top"
+    )
+  ) +
+  coord_sf(datum = NA, clip = "off") +
+  labs(
+    title = "Wildfire closures hit Unified School districts far harder than others",
+    subtitle = "Wildfire missed student-days by district, 2017-18 and 2018-19. Panels separate district types because elementary, high school and unified district boundaries can overlap.",
+    caption = "Source: Annual school closures and standardized test scores in California, 2003-2019; CDE district-area boundaries, 2024-25. District boundaries are reference geography and may not perfectly match 2017-18 or 2018-19 boundaries."
+  ) +
+  theme_void(base_size = 12, base_family = "sans") +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(
+      family = "Georgia",
+      face = "bold",
+      size = 15,
+      color = "#171512",
+      margin = margin(b = 8)
+    ),
+    panel.spacing.x = grid::unit(12, "pt"),
+    plot.title = element_text(
+      family = "Georgia",
+      face = "bold",
+      size = 24,
+      color = "#111111",
+      margin = margin(b = 7)
+    ),
+    plot.subtitle = element_text(
+      size = 10.6,
+      color = "#4E4942",
+      margin = margin(b = 18)
+    ),
+    plot.caption = element_text(
+      size = 8.2,
+      color = "#666057",
+      hjust = 0,
+      lineheight = 1.15,
+      margin = margin(t = 12)
+    ),
+    legend.position = "bottom",
+    legend.justification = "left",
+    legend.title = element_text(size = 9, face = "bold", color = "#403C36"),
+    legend.text = element_text(size = 8.2, color = "#4D4841"),
+    legend.margin = margin(t = 6, b = 2),
+    legend.box.margin = margin(t = 4, r = 0, b = 0, l = 0),
+    plot.margin = margin(24, 18, 18, 18)
+  )
+
+district_wildfire_map
+```
+```{r}
+dir.create(file.path("reports", "figures"), recursive = TRUE, showWarnings = FALSE)
+ggsave(
+  filename = file.path("reports", "figures", "district_wildfire_map.png"),
+  plot = district_wildfire_map,
+  width = 14,
+  height = 7.2,
+  units = "in",
+  dpi = 300
+)
+```

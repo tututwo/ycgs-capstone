@@ -4,6 +4,8 @@
 
 `data/raw/school_fire/` contains the school closure dataset and its codebook. This dataset is included because it is the core project input and is used directly by the Quarto report.
 
+`data/raw/DistrictAreas2425/` contains California Department of Education district boundary files used for reference district maps.
+
 `data/raw/cde_attendance/` is the expected location for local CDE attendance files. The full CDE files are public and can be downloaded with:
 
 ```bash

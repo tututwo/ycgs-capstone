@@ -60,6 +60,12 @@ Main analysis filters:
 
 The attendance analysis uses 2017-18 and 2018-19 because they align with closure `year == 2018` and `year == 2019`. The 2019-20 absenteeism year is intentionally excluded because CDE marks that year unavailable/not valid due to COVID-era disruption.
 
+## CDE District Boundary Data
+
+Path: `data/raw/DistrictAreas2425/`
+
+The district map portions of the analysis use California Department of Education district-area boundary files for 2024-25. These boundaries are used only as reference geography for visualizing district-level wildfire burden. They may not perfectly match the 2017-18 and 2018-19 administrative geography used in the closure records, so district maps should be read as approximate spatial summaries rather than exact historical boundaries.
+
 ## Suppression And Ethics
 
-CDE suppresses small cells with `*` for privacy. Suppressed values are converted to missing values before numeric calculations. The project reports aggregate patterns and avoids identifying individual students.
+CDE suppresses small cells with `*` for privacy. Suppressed values are converted to missing values before numeric calculations. The project reports aggregate patterns and avoids identifying individual students. Additional ethical considerations are documented in `docs/ethics.md`.
