@@ -1,0 +1,247 @@
+---
+title: "Share of Statewide School Closure Days by Cause"
+format:
+  html:
+    fig-width: 11
+    fig-height: 5.8
+    fig-dpi: 180
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(janitor)
+library(scales)
+
+to_number <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "NULL", "*"))
+}
+
+safe_divide <- function(num, den) {
+  if_else(!is.na(den) & den > 0, num / den, NA_real_)
+}
+
+primary_cause_vars <- c(
+  "days_wildfire",
+  "days_natural_disasters_weather",
+  "days_infrastructure",
+  "days_student_safety",
+  "days_other"
+)
+
+data_file <- "annual_school_closures_standardized_test_scores_ca_2003_2019.csv"
+data_path_candidates <- c(
+  file.path("..", "data", "raw", "school_fire", data_file),
+  file.path("data", "raw", "school_fire", data_file)
+)
+
+data_path <- data_path_candidates[file.exists(data_path_candidates)][1]
+if (is.na(data_path)) {
+  stop("Could not find the closure CSV. Check the relative path from this Quarto file.")
+}
+
+closure_data <- readr::read_csv(
+  data_path,
+  col_types = readr::cols(.default = readr::col_character()),
+  show_col_types = FALSE
+) |>
+  clean_names()
+
+if ("days_wildfires" %in% names(closure_data) && !"days_wildfire" %in% names(closure_data)) {
+  closure_data <- closure_data |>
+    rename(days_wildfire = days_wildfires)
+}
+
+cause_lookup <- tibble(
+  cause = primary_cause_vars,
+  cause_label = factor(
+    c(
+      "Wildfire",
+      "Natural disasters/weather",
+      "Infrastructure",
+      "Student safety",
+      "Other"
+    ),
+    levels = c(
+      "Wildfire",
+      "Natural disasters/weather",
+      "Infrastructure",
+      "Student safety",
+      "Other"
+    )
+  ),
+  cause_code = c("WF", "WX", "IN", "SS", "OT")
+)
+
+stacked_bar_palette <- c(
+  "Wildfire" = "#B7342C",
+  "Natural disasters/weather" = "#5E8DB7",
+  "Infrastructure" = "#D8A24A",
+  "Student safety" = "#8A7A5C",
+  "Other" = "#B8B8B8"
+)
+```
+
+```{r wildfire-share-stacked-bar}
+#| fig-height: 8
+#| fig-width: 12
+statewide_by_year <- closure_data |>
+  mutate(
+    year = as.integer(year),
+    across(any_of(primary_cause_vars), to_number),
+    across(any_of(primary_cause_vars), ~ replace_na(.x, 0))
+  ) |>
+  group_by(year) |>
+  summarise(
+    across(all_of(primary_cause_vars), ~ sum(.x, na.rm = TRUE)),
+    .groups = "drop"
+  )
+
+year_levels <- sort(unique(statewide_by_year$year))
+
+statewide_share <- statewide_by_year |>
+  pivot_longer(
+    cols = all_of(primary_cause_vars),
+    names_to = "cause",
+    values_to = "closure_days"
+  ) |>
+  left_join(cause_lookup, by = "cause") |>
+  group_by(year) |>
+  mutate(
+    year_primary_total = sum(closure_days, na.rm = TRUE),
+    share = safe_divide(closure_days, year_primary_total),
+    year_index = match(year, year_levels),
+    segment_label = if_else(closure_days > 0 & share >= 0.08, cause_code, NA_character_),
+    label_color = if_else(cause_label %in% c("Infrastructure", "Other"), "#2A2A2A", "white")
+  ) |>
+  ungroup() |>
+  filter(!is.na(share))
+
+title_badge <- tibble(
+  x = 0.55,
+  y = 1.12,
+  label = "Wildfire"
+)
+
+title_rest <- tibble(
+  x = 2.12,
+  y = 1.12,
+  label = "years stand apart in California school closures"
+)
+
+title_subtitle <- tibble(
+  x = 0.55,
+  y = 1.05,
+  label = "Share of statewide primary closure days by documented cause, 2003-2019. Each column sums to 100%."
+)
+
+stacked_bar_plot <- ggplot(
+  statewide_share,
+  aes(x = year_index, y = share, fill = cause_label, group = cause_label)
+) +
+  geom_col(
+    width = 1,
+    color = alpha("white", 0.35),
+    linewidth = 0.08,
+    position = position_stack(reverse = TRUE)
+  ) +
+  geom_text(
+    aes(label = segment_label, color = label_color),
+    position = position_stack(vjust = 0.5, reverse = TRUE),
+    size = 2.1,
+    fontface = "bold",
+    na.rm = TRUE,
+    check_overlap = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_label(
+    data = title_badge,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 0.5,
+    fill = "#D5979E",
+    color = "white",
+    fontface = "bold",
+    size = 6,
+    label.padding = grid::unit(4, "pt"),
+    label.r = grid::unit(0, "pt"),
+    linewidth = 0
+  ) +
+  geom_text(
+    data = title_rest,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 0.5,
+    color = "#111111",
+    fontface = "bold",
+    size = 6
+  ) +
+  geom_text(
+    data = title_subtitle,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    vjust = 0.5,
+    color = "#555555",
+    size = 3.5
+  ) +
+  scale_fill_manual(values = stacked_bar_palette, name = NULL) +
+  scale_color_identity() +
+  scale_x_continuous(
+    breaks = seq_along(year_levels),
+    labels = year_levels,
+    expand = expansion(add = 0)
+  ) +
+  scale_y_continuous(
+    labels = NULL,
+    breaks = NULL,
+    expand = c(0, 0)
+  ) +
+  coord_cartesian(
+    xlim = c(0.5, length(year_levels) + 0.5),
+    ylim = c(0, 1),
+    clip = "off",
+    expand = FALSE
+  ) +
+  labs(
+    caption = "Note: Wildfire accounted for 96% of primary closure days in 2004, 90% in 2008, 91% in 2018 and 80% in 2019.",
+    x = NULL,
+    y = NULL,
+    fill = NULL
+  ) +
+  guides(
+    fill = guide_legend(
+      nrow = 1,
+      byrow = TRUE,
+      keywidth = unit(18, "pt"),
+      keyheight = unit(4, "pt")
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "#303030", fill = NA, linewidth = 0.35),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    axis.ticks.x = element_line(color = "#303030", linewidth = 0.3),
+    axis.ticks.length = unit(3, "pt"),
+    axis.text.x = element_text(size = 8, color = "#4A4A4A", margin = margin(t = 6)),
+    axis.text.y = element_blank(),
+    plot.title = element_text(face = "bold", size = 17, color = "#111111", margin = margin(b = 5)),
+    plot.subtitle = element_text(size = 10.5, color = "#555555", margin = margin(b = 14)),
+    plot.caption = element_text(size = 8, color = "#666666", hjust = 0, margin = margin(t = 9)),
+    legend.position = "bottom",
+    legend.justification = "left",
+    legend.direction = "horizontal",
+    legend.text = element_text(size = 8, color = "#5D6461"),
+    legend.margin = margin(t = 6, r = 0, b = 0, l = 0),
+    plot.margin = margin(70, 10, 10, 10)
+  )
+
+stacked_bar_plot
+```

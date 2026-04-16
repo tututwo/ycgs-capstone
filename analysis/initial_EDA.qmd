@@ -1873,13 +1873,11 @@ ggplot(
 
 ## Limitations
 
-This EDA is descriptive, not causal. It documents where wildfire closure burden appears in the available closure records, how county chronic absenteeism rates line up with that burden, and how matched absenteeism-by-reason measures look in affected school-years. It does not estimate what absenteeism would have been without wildfire closures.
+This EDA does not estimate what absenteeism would have been without wildfire closures.
 
 The attendance analyses are limited to 2017-18 and 2018-19 because those CDE Chronic Absenteeism and Absenteeism by Reason years match closure `year == 2018` and `year == 2019`. The 2019-20 absenteeism files are excluded because CDE marks that year as unavailable/not valid due to COVID-era disruption.
 
-CDE chronic absenteeism rates reflect CALPADS eligibility rules: students are excluded from the chronic absenteeism denominator when they are expected to attend fewer than 31 instructional days, enrolled but did not attend, or meet exempt-status conditions. Suppressed `*` values are treated as missing, not zero.
-
-The closure-to-Absenteeism-by-Reason match rate is high but incomplete. Unmatched records mean the school-year absence-reason summaries cover most, but not all, closure school-year rows; the unmatched examples should be treated as diagnostics rather than a complete classification of missingness.
+Suppressed `*` values are treated as missing, not zero.
 
 County aggregation can hide within-county school differences. A county can have high total wildfire missed student-days because it has large enrollment, while the most intense closure burden may be concentrated in a smaller set of schools or districts.
 
